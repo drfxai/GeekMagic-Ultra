@@ -456,8 +456,12 @@ void handleFactory() {
 }
 
 void setupServer() {
-  const char *headers[] = {"X-Device-Key"};
-  server.collectHeaders(headers, 1);
+  // ESP8266 core 3.1 replaced the old collectHeaders(array, count) overload with
+  // a variadic template, so passing an array plus a count now tries to convert
+  // the count to a String and fails to compile. Header names are listed
+  // directly instead. Authorization and ETag are always collected by the
+  // library itself, so only our own header needs naming here.
+  server.collectHeaders("X-Device-Key");
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/api/config", HTTP_GET, handleGetConfig);
