@@ -21,7 +21,9 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266HTTPUpdateServer.h>
+#ifndef GODMODE_SLIM
 #include <ESP8266mDNS.h>
+#endif
 #include <WiFiClientSecureBearSSL.h>
 #include <DNSServer.h>
 #include <LittleFS.h>
@@ -538,8 +540,10 @@ void setup() {
     return;
   }
 
+#ifndef GODMODE_SLIM
   MDNS.begin(cfg.host);
   MDNS.addService("http", "tcp", 80);
+#endif
 
   // Time is only used for the idle clock and night dimming. TLS does not need
   // it because certificate validation is skipped (see pollBridge).
@@ -556,7 +560,11 @@ void setup() {
   setupServer();
 
   String ip = WiFi.localIP().toString();
+#ifdef GODMODE_SLIM
+  String hostLine = String("settings: http://") + ip;
+#else
   String hostLine = String("http://") + cfg.host + ".local";
+#endif
   drawBanner("READY", ip.c_str(), hostLine.c_str(), cfg.cBuy);
   delay(2500);
 
@@ -570,7 +578,9 @@ void loop() {
     dnsServer.processNextRequest();
     return;
   }
+#ifndef GODMODE_SLIM
   MDNS.update();
+#endif
 
   uint32_t now = millis();
 

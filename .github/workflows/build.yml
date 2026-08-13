@@ -30,36 +30,49 @@ jobs:
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      - name: Build
+      - name: Build both images
         working-directory: firmware
-        run: pio run -e smalltv_ultra
+        run: pio run -e smalltv_ultra -e smalltv_ultra_slim
 
-      - name: Report image size
-        working-directory: firmware
-        run: |
-          BIN=.pio/build/smalltv_ultra/firmware.bin
-          SIZE=$(stat -c%s "$BIN")
-          echo "firmware.bin = $SIZE bytes ($((SIZE/1024)) kB)"
-          echo "The stock GeekMagic Ultra firmware reserves most of its flash for"
-          echo "the photo album, so its over-the-air slot is small. Under ~500 kB"
-          echo "should upload cleanly; above that, flash over UART instead."
-          if [ "$SIZE" -gt 512000 ]; then
-            echo "::warning::Image is larger than 500 kB - the stock OTA updater may reject it."
-          fi
-
-      - name: Stage artifact
+      - name: Stage artifacts and report sizes
         run: |
           mkdir -p out
-          cp firmware/.pio/build/smalltv_ultra/firmware.bin out/drfx-godmode-smalltv-ultra.bin
+          cp firmware/.pio/build/smalltv_ultra/firmware.bin      out/drfx-godmode-smalltv-ultra.bin
+          cp firmware/.pio/build/smalltv_ultra_slim/firmware.bin out/drfx-godmode-smalltv-ultra-SLIM.bin
+
+          FULL=$(stat -c%s out/drfx-godmode-smalltv-ultra.bin)
+          SLIM=$(stat -c%s out/drfx-godmode-smalltv-ultra-SLIM.bin)
+
+          {
+            echo "## Firmware images"
+            echo ""
+            echo "| Image | Size | Fits the stock OTA slot? |"
+            echo "|---|---|---|"
+            printf "| full | %s bytes (%s kB) | %s |\n" "$FULL" "$((FULL/1024))" \
+              "$([ "$FULL" -le 450560 ] && echo 'likely' || echo 'NO - too big')"
+            printf "| SLIM | %s bytes (%s kB) | %s |\n" "$SLIM" "$((SLIM/1024))" \
+              "$([ "$SLIM" -le 450560 ] && echo 'likely' || echo 'NO - still too big')"
+            echo ""
+            echo "The stock GeekMagic Ultra firmware reserves most of its flash for the"
+            echo "photo album, so the slot left for an over-the-air update is small."
+            echo "Flash the SLIM image through the stock updater first. Once the device"
+            echo "is running our layout there is ~3 MB of program area, so you can then"
+            echo "update to the full image from Admin -> Firmware update."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "full = $FULL bytes, slim = $SLIM bytes"
+          if [ "$SLIM" -gt 450560 ]; then
+            echo "::warning::Even the slim image is over 440 kB - UART flashing may be needed."
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: firmware
-          path: out/drfx-godmode-smalltv-ultra.bin
+          path: out/*.bin
           if-no-files-found: error
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/drfx-godmode-smalltv-ultra.bin
+          files: out/*.bin

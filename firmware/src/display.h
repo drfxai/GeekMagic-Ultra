@@ -15,6 +15,22 @@
 
 #define TFT_BL_PIN 5      // backlight, PWM, active LOW on this board
 
+// The slim build (see platformio.ini) drops the big font tables to fit the
+// stock Ultra's OTA slot. Font 4 is always present and is a reasonable stand-in
+// for both: asking TFT_eSPI for a font that was not compiled in draws nothing
+// at all, so these have to resolve at build time rather than at runtime.
+#if defined(LOAD_FONT6)
+  #define FONT_SCORE 6      // 48px numerals
+#else
+  #define FONT_SCORE 4
+#endif
+
+#if defined(LOAD_FONT7)
+  #define FONT_CLOCK 7      // 7-segment face
+#else
+  #define FONT_CLOCK 4
+#endif
+
 extern TFT_eSPI tft;
 
 /* 24-bit RGB from the settings page -> 16-bit RGB565 for the panel */
@@ -82,7 +98,7 @@ inline void drawGauge(int score, uint32_t colour) {
   tft.setTextDatum(MC_DATUM);
   tft.setTextPadding(70);
   tft.setTextColor(rgb(cfg.cText), bg);
-  tft.drawString(buf, cx, cy - 6, 6);          // font 6 = 48px numerals
+  tft.drawString(buf, cx, cy - 6, FONT_SCORE);
 
   tft.setTextPadding(0);
   tft.setTextColor(tft.color565(0x8B, 0x8B, 0xA7), bg);
@@ -158,7 +174,7 @@ inline void drawIdle(const char *hhmm, const char *sub) {
   if (cfg.showClock && hhmm && *hhmm) {
     tft.setTextColor(rgb(cfg.cText), bg);
     tft.setTextPadding(200);
-    tft.drawString(hhmm, 120, 118, 7);       // font 7 = 7-segment
+    tft.drawString(hhmm, 120, 118, FONT_CLOCK);
     tft.setTextPadding(0);
   }
 
@@ -172,6 +188,6 @@ inline void updateIdleClock(const char *hhmm) {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(rgb(cfg.cText), rgb(cfg.cBg));
   tft.setTextPadding(200);
-  tft.drawString(hhmm, 120, 118, 7);
+  tft.drawString(hhmm, 120, 118, FONT_CLOCK);
   tft.setTextPadding(0);
 }
