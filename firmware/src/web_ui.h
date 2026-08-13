@@ -138,7 +138,12 @@ function toast(t,bad){var e=$('toast');e.textContent=t;e.style.borderColor=bad?'
 function hex(n){return '#'+('000000'+(n>>>0).toString(16)).slice(-6);}
 function unhex(s){return parseInt(s.slice(1),16);}
 
-function load(){
+/* Populating the form and refreshing the status panel MUST stay separate.
+   They used to be one function on a 15-second timer, which meant the timer
+   overwrote whatever you were halfway through typing - paste a bridge URL,
+   pause to find your device key, and the URL was silently reverted before you
+   ever pressed Save. Only loadStatus() is on the timer now. */
+function loadConfig(){
  fetch('/api/config').then(function(r){return r.json()}).then(function(c){C=c;
   ['ssid','ssid2','host','bridge','devId','adminUser'].forEach(function(k){$(k).value=c[k]||''});
   ['pollSec','staleMin','brightDay','brightNight','nightStart','nightEnd'].forEach(function(k){$(k).value=c[k]});
@@ -147,7 +152,9 @@ function load(){
   if(c.hasPass)$('pass').placeholder='saved - leave blank to keep';
   if(c.hasDevKey)$('devKey').placeholder='saved - leave blank to keep';
  }).catch(function(){toast('Could not read settings',1)});
+}
 
+function loadStatus(){
  fetch('/api/status').then(function(r){return r.json()}).then(function(s){
   $('sub').innerHTML='v'+s.fw+' &middot; '+(s.ap?'setup mode':s.ssid+' &middot; '+s.ip);
   var g=s.signal,rows=[
@@ -186,10 +193,12 @@ function save(){
   .catch(function(){toast('Save failed',1)});
 }
 function post(u){fetch(u,{method:'POST'}).then(function(){toast('Done')}).catch(function(){toast('Failed',1)});}
-function test(){fetch('/api/test',{method:'POST'}).then(function(){toast('Test signal on the screen');setTimeout(load,500)});}
+function test(){fetch('/api/test',{method:'POST'}).then(function(){toast('Test signal on the screen');setTimeout(loadStatus,500)});}
 function scan(){toast('Scanning&hellip;');fetch('/api/scan').then(function(r){return r.json()}).then(function(l){
  $('nets').innerHTML=l.sort(function(a,b){return b.rssi-a.rssi}).map(function(n){return '<option value="'+n.ssid+'">'}).join('');
  toast(l.length+' networks found');});}
 
-load();setInterval(load,15000);
+function load(){loadConfig();loadStatus();}
+load();
+setInterval(loadStatus,15000);
 </script></body></html>)HTMLPAGE";

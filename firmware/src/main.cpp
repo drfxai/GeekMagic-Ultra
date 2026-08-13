@@ -164,7 +164,16 @@ void refreshScreen(bool force = false) {
 
 void pollBridge() {
   if (apMode || WiFi.status() != WL_CONNECTED) return;
-  if (!cfg.bridge[0] || !cfg.devKey[0]) return;
+  // Report which half is missing. Returning silently here made an unsaved
+  // bridge URL and an unsaved device key look identical on the Status tab.
+  if (!cfg.bridge[0]) {
+    lastError = F("no bridge URL saved");
+    return;
+  }
+  if (!cfg.devKey[0]) {
+    lastError = F("no device key saved");
+    return;
+  }
 
   // A TLS session needs roughly 22 kB (16 kB receive buffer plus BearSSL's own
   // state). Attempting it with less free heap than that is how an ESP8266 ends
