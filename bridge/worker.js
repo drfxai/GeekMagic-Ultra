@@ -230,6 +230,12 @@ function parseAlert(raw) {
     // than dropping a signal that might still be readable.
   }
 
+  // The JSDoc type is only here to keep editors quiet. The Cloudflare dashboard
+  // runs TypeScript inference over plain .js, so a bare `obj = {}` makes every
+  // later `obj.symbol` / `obj.side` report ts(2339) "does not exist on type {}".
+  // Harmless at runtime - this is a bag of arbitrary keys scraped from the
+  // alert body - but the red squiggles look like the Worker is broken.
+  /** @type {Record<string, any> | null} */
   let obj = null;
   if (body[0] === "{") {
     try {
