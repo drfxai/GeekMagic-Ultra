@@ -22,12 +22,25 @@ if grep -q '<PASTE_KV_ID_HERE>' wrangler.toml; then
   echo "KV id $ID written to wrangler.toml"
 fi
 
-echo
-echo "Now paste the two keys from SECRETS.local.md when prompted."
-echo "  1/2  WEBHOOK_KEY  (TradingView uses this)"
-wrangler secret put WEBHOOK_KEY
-echo "  2/2  DEVICE_KEY   (the SmallTV uses this)"
-wrangler secret put DEVICE_KEY
+# Read the keys straight out of SECRETS.local.md so there is nothing to paste.
+SEC="../SECRETS.local.md"
+getkey() {
+  grep -F "$1" "$SEC" | grep -oE '`[A-Za-z0-9]{20,}`' | tr -d '`' | grep -v "^$1$" | head -1
+}
+if [ -f "$SEC" ]; then
+  WK=$(getkey WEBHOOK_KEY); DK=$(getkey DEVICE_KEY)
+fi
+if [ -n "${WK:-}" ] && [ -n "${DK:-}" ]; then
+  echo "Uploading the two secrets from SECRETS.local.md..."
+  printf '%s' "$WK" | wrangler secret put WEBHOOK_KEY
+  printf '%s' "$DK" | wrangler secret put DEVICE_KEY
+else
+  echo "Paste the two keys from SECRETS.local.md when prompted."
+  echo "  1/2  WEBHOOK_KEY  (TradingView uses this)"
+  wrangler secret put WEBHOOK_KEY
+  echo "  2/2  DEVICE_KEY   (the SmallTV uses this)"
+  wrangler secret put DEVICE_KEY
+fi
 
 wrangler deploy
 echo
