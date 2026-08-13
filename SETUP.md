@@ -48,6 +48,10 @@ What this buys you:
 
 This is the piece that gives TradingView its HTTPS address.
 
+> Want each setting explained rather than just listed — what KV is, why the
+> binding must be called `SIGNALS`, what the free plan actually allows?
+> See **[CLOUDFLARE.md](CLOUDFLARE.md)**.
+
 ### 1.1 Make the storage bucket
 
 1. Sign in to Cloudflare and go to **Storage & Databases → KV**.

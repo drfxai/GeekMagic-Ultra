@@ -4,6 +4,8 @@ TradingView signals on a GeekMagic SmallTV Ultra.
 
 **Start here → [SETUP.md](SETUP.md)**
 
+Configuring Cloudflare by hand? → **[CLOUDFLARE.md](CLOUDFLARE.md)**
+
 ---
 
 ## Why there's a "bridge"
@@ -45,6 +47,7 @@ tools/
   send-test-signal.py       fire a test signal without TradingView
 .github/workflows/build.yml GitHub compiles the .bin for you - no toolchain
 SETUP.md                    the step-by-step guide
+CLOUDFLARE.md               every Worker setting explained, plus an install roadmap
 ```
 
 ---
