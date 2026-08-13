@@ -1,0 +1,69 @@
+// ---------------------------------------------------------------------------
+// DrFX GodMode - TradingView alert message templates
+//
+// Paste ONE of these blocks into the "Message" box of a TradingView alert.
+// (This file has comments for your benefit; TradingView's box must contain
+// only the JSON itself, with no // lines.)
+//
+// Webhook URL to use alongside it:
+//   https://drfx-godmode-bridge.YOURNAME.workers.dev/tv?key=YOUR_WEBHOOK_KEY
+// ---------------------------------------------------------------------------
+
+
+// 1. MINIMAL - just symbol and direction
+{"symbol":"{{ticker}}","side":"BUY"}
+
+
+// 2. TYPICAL - an indicator alert with fixed levels
+{"symbol":"{{ticker}}","side":"BUY","score":90,"conf":85,
+ "tp1":"3378","tp2":"3386","sl":"3362","tf":"{{interval}}"}
+
+
+// 3. FROM PLOTS - levels come from your Pine script's plot() outputs.
+//    {{plot_0}} is the first plot in the script, {{plot_1}} the second, etc.
+{"symbol":"{{ticker}}","side":"BUY","score":90,"conf":85,
+ "entry":"{{close}}","tp1":"{{plot_0}}","tp2":"{{plot_1}}","sl":"{{plot_2}}",
+ "tf":"{{interval}}","note":"GodMode"}
+
+
+// 4. FROM A STRATEGY - direction follows the strategy's own order
+{"symbol":"{{ticker}}","side":"{{strategy.order.action}}","score":88,"conf":80,
+ "entry":"{{strategy.order.price}}","tf":"{{interval}}",
+ "note":"{{strategy.order.comment}}"}
+
+
+// 5. CLOSE / FLAT - clears the direction colour on the screen
+{"symbol":"{{ticker}}","side":"FLAT","note":"closed"}
+
+
+// 6. PLAIN TEXT - if JSON is awkward, this is parsed just as well
+XAUUSD BUY score=96 conf=94 tp1=3378 tp2=3386 sl=3362
+
+
+// ---------------------------------------------------------------------------
+// FIELD REFERENCE
+//
+//   symbol   text, up to 12 chars   shown large on the card
+//   side     BUY | SELL | FLAT      sets the colour and the arrow
+//                                   (LONG/SHORT/CLOSE are accepted too)
+//   score    0-100                  drives the big ring gauge
+//   conf     0-100                  shown as CONF at bottom right
+//   entry    text                   currently unused by the display
+//   tp1,tp2  text                   shown in green
+//   sl       text                   shown in red
+//   tf       text, up to 6 chars    timeframe, e.g. 15
+//   note     text, up to 24 chars   free text
+//
+// Anything you leave out simply shows as "-". Field names are flexible:
+// "action"/"signal"/"direction" all work for side, "target1"/"tp" for tp1,
+// "stop"/"stoploss" for sl, "confidence"/"probability" for conf.
+//
+// USEFUL TRADINGVIEW PLACEHOLDERS
+//   {{ticker}}    {{exchange}}   {{close}}    {{open}}   {{high}}   {{low}}
+//   {{volume}}    {{interval}}   {{time}}     {{timenow}}
+//   {{plot_0}} ... {{plot_N}}    values of your script's plots
+//   {{strategy.order.action}}    buy or sell
+//   {{strategy.order.price}}     fill price
+//   {{strategy.order.comment}}   your comment text
+//   {{strategy.position_size}}   current position size
+// ---------------------------------------------------------------------------

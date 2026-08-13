@@ -1,0 +1,17 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+.pio/
+
+# Cloudflare / wrangler
+.wrangler/
+node_modules/
+.dev.vars
+
+# Local secrets - never commit
+SECRETS.local.md
+*.local.env
+
+# OS noise
+.DS_Store
+Thumbs.db

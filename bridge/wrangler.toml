@@ -1,0 +1,25 @@
+# DrFX GodMode Bridge - Cloudflare Worker configuration
+#
+# Deploy:
+#   npm install -g wrangler
+#   wrangler login
+#   wrangler kv namespace create SIGNALS      # paste the printed id below
+#   wrangler secret put WEBHOOK_KEY           # what TradingView will use
+#   wrangler secret put DEVICE_KEY            # what the SmallTV will use
+#   wrangler deploy
+#
+# You can also do all of this by hand in the Cloudflare dashboard
+# (Workers & Pages -> Create -> Worker -> paste worker.js).
+
+name = "drfx-godmode-bridge"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Free plan is enough. Observability makes the dashboard show request logs.
+[observability]
+enabled = true
+
+# Replace <PASTE_KV_ID_HERE> with the id printed by `wrangler kv namespace create SIGNALS`.
+[[kv_namespaces]]
+binding = "SIGNALS"
+id = "<PASTE_KV_ID_HERE>"

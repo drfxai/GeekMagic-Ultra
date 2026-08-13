@@ -1,0 +1,65 @@
+# Builds the SmallTV Ultra firmware in the cloud so you never have to install
+# a compiler. Push this folder to a GitHub repo, open the Actions tab, wait
+# about two minutes, then download the "firmware" artifact.
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        working-directory: firmware
+        run: pio run -e smalltv_ultra
+
+      - name: Report image size
+        working-directory: firmware
+        run: |
+          BIN=.pio/build/smalltv_ultra/firmware.bin
+          SIZE=$(stat -c%s "$BIN")
+          echo "firmware.bin = $SIZE bytes ($((SIZE/1024)) kB)"
+          echo "The stock GeekMagic Ultra firmware reserves most of its flash for"
+          echo "the photo album, so its over-the-air slot is small. Under ~500 kB"
+          echo "should upload cleanly; above that, flash over UART instead."
+          if [ "$SIZE" -gt 512000 ]; then
+            echo "::warning::Image is larger than 500 kB - the stock OTA updater may reject it."
+          fi
+
+      - name: Stage artifact
+        run: |
+          mkdir -p out
+          cp firmware/.pio/build/smalltv_ultra/firmware.bin out/drfx-godmode-smalltv-ultra.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: out/drfx-godmode-smalltv-ultra.bin
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/drfx-godmode-smalltv-ultra.bin
