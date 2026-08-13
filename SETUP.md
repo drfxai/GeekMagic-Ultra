@@ -94,8 +94,17 @@ https://drfx-godmode-bridge.YOURNAME.workers.dev
 Open it in a browser. You should see a dark **DRFX GODMODE BRIDGE** page saying
 "no signals received yet". That means it's alive.
 
-*Prefer the command line?* `bridge/wrangler.toml` does the same thing with
-`wrangler deploy`.
+*Prefer the command line?* Skip 1.1–1.3 entirely and run the deploy script — it
+creates the KV namespace, writes the id into `wrangler.toml`, prompts for the two
+secrets and deploys:
+
+```
+# macOS / Linux
+cd bridge && ./deploy.sh
+
+# Windows PowerShell, from the repo root
+.\bridge\deploy.ps1
+```
 
 ---
 
