@@ -149,6 +149,58 @@ async function handleStatus(url, env) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Read the DrFX GodMode [[DRFX]] telemetry tag.
+ *
+ * entry events carry the levels; tp1/tp2/tp3/sl/close are terminal events that
+ * carry only symbol, price and outcome, so they are shown as FLAT with a short
+ * note rather than pretending to be a fresh trade.
+ */
+function parseDrfxTag(jsonText) {
+  let j;
+  try {
+    j = JSON.parse(jsonText);
+  } catch (_) {
+    return null;
+  }
+
+  const ev = String(j.event || "").toLowerCase();
+  const dir = String(j.direction || "").toUpperCase();
+  let side = dir === "LONG" ? "BUY" : dir === "SHORT" ? "SELL" : "";
+  let note = "";
+
+  if (ev === "tp1" || ev === "tp2" || ev === "tp3") {
+    side = "FLAT";
+    note = ev.toUpperCase() + " hit";
+  } else if (ev === "sl") {
+    side = "FLAT";
+    note = j.result === "win" ? "stop, TP2 made" : "stopped out";
+  } else if (ev === "close") {
+    side = "FLAT";
+    note = String(j.reason || "closed");
+  }
+
+  const symbol = String(j.symbol || "").toUpperCase().slice(0, 12);
+  if (!symbol && !side) return null;
+
+  return {
+    symbol,
+    side,
+    // "strength" is the consensus quality score the indicator already computes
+    // on a 0-100 scale, which is exactly what the gauge wants.
+    score: j.strength,
+    // There is no separate confidence field; how many of the four systems
+    // agreed is the honest equivalent.
+    conf: j.systems === undefined || j.systems === null ? "" : (Number(j.systems) / 4) * 100,
+    entry: j.entry !== undefined ? j.entry : j.price,
+    tp1: j.tp1,
+    tp2: j.tp2,
+    sl: j.sl,
+    tf: j.tf,
+    note,
+  };
+}
+
+/**
  * TradingView sends whatever you typed in the alert box. We accept:
  *   1. JSON:  {"symbol":"XAUUSD","side":"BUY","score":96,"tp1":3378,...}
  *   2. Text:  XAUUSD BUY score=96 tp1=3378 tp2=3386 sl=3362 conf=94
@@ -157,6 +209,26 @@ async function handleStatus(url, env) {
 function parseAlert(raw) {
   const body = (raw || "").trim();
   if (!body) return null;
+
+  // 1. DrFX GodMode Pine indicator.
+  //
+  // That script sends alerts through Pine's alert() function, which means the
+  // message is the script's own Telegram-formatted block - the Message box in
+  // the TradingView dialog is ignored entirely. Buried in that block is a
+  // machine-readable tag:
+  //
+  //   [[DRFX]]{"event":"entry","symbol":"XAUUSD","direction":"long",...}[[/DRFX]]
+  //
+  // Prefer it over scraping the decorative text: it is exact, and the pretty
+  // part is full of emoji, box-drawing characters and "STOP LOSS:" labels that
+  // a generic key=value scraper reads badly.
+  const tag = body.match(/\[\[DRFX\]\]\s*(\{[\s\S]*?\})\s*\[\[\/DRFX\]\]/);
+  if (tag) {
+    const fromTag = parseDrfxTag(tag[1]);
+    if (fromTag) return fromTag;
+    // Malformed tag - fall through and try the generic parsers below rather
+    // than dropping a signal that might still be readable.
+  }
 
   let obj = null;
   if (body[0] === "{") {
@@ -212,7 +284,7 @@ function parseAlert(raw) {
     entry: pick("entry", "price", "close", "e"),
     tp1: pick("tp1", "tp", "target1", "target", "takeprofit1", "take_profit_1"),
     tp2: pick("tp2", "target2", "takeprofit2", "take_profit_2"),
-    sl: pick("sl", "stop", "stoploss", "stop_loss"),
+    sl: pick("sl", "stop", "stoploss", "stop_loss", "loss"),
     tf: pick("tf", "timeframe", "interval"),
     note: pick("note", "comment", "msg", "message", "strategy"),
   };

@@ -1,4 +1,18 @@
 // ---------------------------------------------------------------------------
+// ⚠️ USING THE "GOD MODE - Quad Consensus" PINE INDICATOR? IGNORE THIS FILE.
+//
+// That script sends its alerts with Pine's alert() function, which means:
+//   1. the alert's Condition MUST be "Any alert() function call", and
+//   2. this Message box is IGNORED - TradingView sends the script's own text.
+//
+// The bridge reads the hidden [[DRFX]] tag inside that text and gets the
+// symbol, direction, entry, stop and targets exactly. Nothing to paste.
+//
+// The templates below are for plain indicators that have no alert() calls of
+// their own, where you do type the message yourself.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // DrFX GodMode - TradingView alert message templates
 //
 // Paste ONE of these blocks into the "Message" box of a TradingView alert.
