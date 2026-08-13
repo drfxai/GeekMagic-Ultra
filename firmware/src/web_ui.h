@@ -157,6 +157,7 @@ function load(){
    ['Bridge', s.httpCode===200?'<span class="ok">new signal received</span>':(s.httpCode===204?'<span class="ok">connected, nothing new</span>':'<span class="bad">'+(s.error||'not configured')+'</span>')],
    ['Small TLS buffers', s.mfln?'yes (low memory use)':'no (16 kB buffer)'],
    ['Clock synced', s.timeOk?'yes':'not yet'],
+   ['Settings on flash', s.cfgOnFlash?'<span class="ok">saved</span>':'<span class="bad">NOT SAVED - will reset on reboot</span>'],
    ['Free memory', s.heap+' bytes'],
    ['Uptime', Math.floor(s.uptime/3600)+'h '+Math.floor(s.uptime%3600/60)+'m'],
    ['Current signal', g.valid?(g.symbol+' '+g.side+' &middot; score '+g.score+' &middot; '+g.ageSec+'s ago'+(g.fresh?'':' <span class="bad">(expired)</span>')):'none yet']
@@ -177,7 +178,9 @@ function save(){
   cText:unhex($('cText').value),cBg:unhex($('cBg').value)};
  fetch('/api/config',{method:'POST',body:JSON.stringify(b)})
   .then(function(r){return r.json()})
-  .then(function(r){toast(r.reboot?'Saved. Rebooting - reconnect in about 20 seconds.':'Saved.');
+  .then(function(r){
+   if(!r.ok){toast('SAVE FAILED - could not write to flash. Settings will be lost on reboot.',1);return;}
+   toast(r.reboot?'Saved. Rebooting - reconnect in about 20 seconds.':'Saved.');
    $('pass').value='';$('pass2').value='';$('devKey').value='';$('adminPass').value='';
    if(!r.reboot)setTimeout(load,600);})
   .catch(function(){toast('Save failed',1)});

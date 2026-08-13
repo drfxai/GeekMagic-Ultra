@@ -371,6 +371,9 @@ void handleStatus() {
   doc["heap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
   doc["mfln"] = mflnOk;
+  // Whether settings actually reached flash. If this is false after a Save,
+  // LittleFS is not persisting and everything will revert on the next reboot.
+  doc["cfgOnFlash"] = LittleFS.exists(CFG_PATH);
   doc["timeOk"] = timeReady;
   doc["httpCode"] = lastHttpCode;
   doc["fails"] = pollFails;
