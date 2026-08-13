@@ -76,7 +76,7 @@ if ((Get-Content wrangler.toml -Raw) -match '<PASTE_KV_ID_HERE>') {
   if (-not $id) { Write-Host $out; throw "Could not read the namespace id from the output above." }
   (Get-Content wrangler.toml -Raw).Replace('<PASTE_KV_ID_HERE>', $id) | Set-Content wrangler.toml -NoNewline
   Write-Host "    created, id $id written into wrangler.toml"
-  Write-Host "    (wrangler names it 'drfx-godmode-bridge-SIGNALS' rather than"
+  Write-Host "    (wrangler names it 'fx-godmode-bridge-SIGNALS' rather than"
   Write-Host "     'godmode-signals' - the binding is what matters, not the title)"
 } else {
   Write-Host "    wrangler.toml already has a namespace id - reusing it"

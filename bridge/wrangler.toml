@@ -11,7 +11,7 @@
 # You can also do all of this by hand in the Cloudflare dashboard
 # (Workers & Pages -> Create -> Worker -> paste worker.js).
 
-name = "drfx-godmode-bridge"
+name = "fx-godmode-bridge"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 
