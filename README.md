@@ -4,8 +4,8 @@ A small framework for putting live trading signals on a GeekMagic SmallTV Ultra 
 firmware, an HTTPS bridge, a terminal client and a design system that keeps them
 looking like one product.
 
-**New here → [SETUP.md](SETUP.md)** · Configuring Cloudflare by hand →
-**[CLOUDFLARE.md](CLOUDFLARE.md)**
+**New here → [docs/SETUP.md](docs/SETUP.md)** · Configuring Cloudflare by hand →
+**[docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)**
 
 ```
 TradingView ──HTTPS POST──▶ Cloudflare Worker ──▶ KV store
@@ -35,13 +35,15 @@ stay switched on.
 |---|---|---|
 | **firmware/** | ESP8266 firmware: Wi‑Fi, settings server, poll loop, three screens | [`src/main.cpp`](firmware/src/main.cpp) |
 | **bridge/** | Cloudflare Worker — the HTTPS endpoint and a week of signal history | [`worker.js`](bridge/worker.js) |
-| **tools/drfx.py** | Terminal client: status, watch, push, timezone, diagnostics | [docs/CLI.md](docs/CLI.md) |
+| **tools/** | `drfx` terminal client, plus the timezone generator and its test | [docs/CLI.md](docs/CLI.md) |
 | **ui/** | The design system rendered at true size, openable in a browser | [`screens-preview.html`](ui/screens-preview.html) |
 | **shared/** | `timezones.json` — one source of truth for the clock | below |
-| **docs/** | Design system and CLI reference | [DESIGN.md](docs/DESIGN.md) |
+| **docs/** | Setup, Cloudflare, design system, CLI reference | [docs/SETUP.md](docs/SETUP.md) |
+| **vendor/** | GeekMagic's stock firmware — the way back to factory | [vendor/README.md](vendor/README.md) |
+| **archive/** | Superseded 1.x artifacts, kept for reference only | [archive/README.md](archive/README.md) |
 
 ```
-firmware/
+firmware/                   what runs on the device
   platformio.ini            board + panel configuration
   src/main.cpp              boot, Wi-Fi, web server, polling loop
   src/config.h              settings struct, saved as /config.json
@@ -49,19 +51,23 @@ firmware/
   src/ui.h                  layout grid, colour derivation, primitives
   src/display.h             the three screens
   src/web_ui.h              the settings page, served from flash
-bridge/
-  worker.js                 paste into the Cloudflare dashboard, or
+bridge/                     what runs on Cloudflare
+  worker.js                 paste into the dashboard, or
   wrangler.toml             deploy from the command line
-shared/
+  deploy.sh, deploy.ps1     one-shot deploy scripts
+shared/                     used by more than one component
   timezones.json            zones + POSIX rules, source of truth
-tools/
+tools/                      what runs on your machine
   drfx.py                   the terminal client
   gen_timezones.py          regenerates the picker inside web_ui.h
   test_timezones.py         checks every rule against the IANA database
+ui/                         the design system, reviewable without hardware
+  screens-preview.html      every screen at 240x240, in a browser
+docs/                       SETUP, CLOUDFLARE, DESIGN, CLI
 tradingview/
   alert-message.json        alert templates + field reference
-ui/
-  screens-preview.html      every screen at 240x240, in a browser
+vendor/                     third-party, unmodified — GeekMagic stock firmware
+archive/                    superseded 1.x artifacts, reference only
 ```
 
 ---
@@ -126,9 +132,20 @@ Hardware details confirmed against the
 [ESPHome device page](https://devices.esphome.io/devices/geekmagic-ultra/).
 
 **You do not need a toolchain.** Push to GitHub and
-[the build workflow](.github/workflows/build.yml) compiles both images and
-attaches them to the Actions run. Flash the SLIM image through the stock updater
-first, then update to the full image from Admin → Firmware update.
+[the build workflow](.github/workflows/build.yml) compiles both images — `full`
+and `SLIM` — and attaches them to the Actions run, with their sizes in the run
+summary.
+
+> **Expect to need a serial cable for the first flash.** The stock Ultra firmware
+> reserves most of the chip for its photo album, leaving roughly 440 kB for an
+> over-the-air update. Both current images are larger than that, so the stock web
+> updater will usually refuse them and the first install goes over UART. After
+> that the device runs our flash layout, with ~3 MB of program area, and every
+> later update is a browser upload via **Admin → Firmware update**.
+>
+> Check the size table in the build summary before you start — if `SLIM` fits your
+> unit's slot, the stock updater is worth trying first. Full instructions, wiring
+> included, are in [docs/SETUP.md](docs/SETUP.md).
 
 ---
 
@@ -168,18 +185,22 @@ does, a 1 kB buffer is used instead.
 
 **Why certificate validation is skipped.** No root store fits comfortably
 alongside the display driver. The shared device key in the URL is what
-authenticates the exchange. Only signal data travels this path — see the security
-note at the end of SETUP.md, and treat the screen as a glanceable notification
+authenticates the exchange. Only signal data travels this path — see
+[SECURITY.md](SECURITY.md), and treat the screen as a glanceable notification
 rather than a trade instruction.
 
 ---
 
-## Contributing
+## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Changes to
 [`shared/timezones.json`](shared/timezones.json) must be followed by
 `python tools/gen_timezones.py`; CI fails otherwise.
 
+Security policy, threat model and reporting: [SECURITY.md](SECURITY.md).
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE). Not affiliated with GeekMagic or TradingView.
+Files under [`vendor/`](vendor/README.md) belong to their original authors and
+are not covered by that licence.

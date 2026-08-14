@@ -221,7 +221,7 @@ called `firmware` and unzips to `drfx-godmode-smalltv-ultra.bin`.
 
 **Stage 3 erases the device.** Flashing replaces the stock firmware completely,
 including any photos stored on it. Your way back is
-`stock-firmware/FW-Smalltv-Ultra-V9.0.50/FW-Smalltv-Ultra-V9.0.50.bin`, which is
+`vendor/stock-firmware/FW-Smalltv-Ultra-V9.0.50/FW-Smalltv-Ultra-V9.0.50.bin`, which is
 already in this repo.
 
 **Stage 3 may refuse the upload.** The stock Ultra firmware reserves most of the

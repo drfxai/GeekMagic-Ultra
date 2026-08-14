@@ -3,6 +3,49 @@
 Notable changes, newest first. Versions follow the firmware, and the bridge
 tracks the same major number.
 
+## 2.0.1 — repository tidy-up
+
+No functional change to the firmware, the bridge or the CLI.
+
+### Layout
+
+The root had grown to fourteen entries with vendor binaries, guides and code all
+at the same level. Everything now sits under a folder that says what it is:
+
+- `SETUP.md` and `CLOUDFLARE.md` moved into `docs/`, alongside `DESIGN.md` and
+  `CLI.md`. The root keeps only the files GitHub itself renders — README,
+  LICENSE, CHANGELOG, CONTRIBUTING, SECURITY.
+- GeekMagic's stock firmware moved to `vendor/stock-firmware/`, with a
+  [README](vendor/README.md) recording where it came from, its checksum, and the
+  fact that it is not covered by our licence.
+- Superseded 1.x artifacts — the old packaged bridge and a photograph of the old
+  screen design — moved to `archive/`, clearly marked as reference only.
+
+### Removed
+
+- `tools/send-test-signal.py` — superseded by `drfx push` and `drfx send`, which
+  do the same two jobs with better diagnostics.
+- `firmware/src/signal.h` — a forwarding shim that existed only to stop a file of
+  that name shadowing the C library's `<signal.h>`. With the model living in
+  `signal_model.h` there is nothing left to shadow, and the shim's own comment
+  said it was safe to delete.
+
+### Added
+
+- `SECURITY.md` — reporting process, the threat model, and an explicit list of
+  known trade-offs (skipped certificate validation, keys in query strings) so
+  they are not repeatedly reported as vulnerabilities.
+
+### Documentation corrected
+
+The build was telling the truth and the docs were not. Both images exceed the
+~440 kB the stock updater leaves for an over-the-air update — full is about
+587 kB, slim about 512 kB — but README and SETUP still said to flash the slim
+image through the stock web console. The flashing guide now leads with UART,
+keeps the stock-updater attempt as an optional two-minute first try, and the
+build summary explains what the 440 kB figure is and what a `NO` in the size
+table actually means.
+
 ## 2.0.0
 
 ### Design
@@ -66,7 +109,8 @@ tracks the same major number.
   the poll loop, the bridge, the key, and whether the two clocks agree — and
   names the broken link rather than just reporting failure. Non-zero exit on
   failure, so it drops into a monitoring script.
-- `tools/send-test-signal.py` still works and is unchanged.
+- `tools/send-test-signal.py` is superseded by `drfx push` / `drfx send` and was
+  removed in the 2.0.1 tidy-up.
 
 ### Repository
 
