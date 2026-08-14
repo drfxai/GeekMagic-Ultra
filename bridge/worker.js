@@ -24,21 +24,29 @@
  * KV namespace binding: SIGNALS
  */
 
-const BRIDGE_VERSION = "2.1.0";
+const BRIDGE_VERSION = "2.1.1";
 const MAX_BODY = 8 * 1024;      // reject silly-sized alert bodies
 const HISTORY = 24;             // how many past signals to keep
 const TTL = 60 * 60 * 24 * 7;   // KV entries expire after a week
 
 /* ---- crypto proxy ------------------------------------------------ */
-// data-api.binance.vision is Binance's public market-data host: same data as
-// api.binance.com, no key, and intended for exactly this. api.binance.com
-// geo-blocks some regions, which would fail depending on which edge the Worker
-// happened to run in - a maddening intermittent bug to diagnose from a 240x240
-// screen.
-const BINANCE = "https://data-api.binance.vision";
+//
+// Binance returns 403 to Cloudflare Workers. Not a geo-block and not a missing
+// User-Agent - both were tested, every UA gets 200 from a residential IP and
+// none from here. Binance simply refuses Cloudflare's egress ranges, and no
+// header we can send changes that.
+//
+// So market data comes from whichever source answers. Binance stays first
+// because it has the best coverage and may work from edges we have not seen,
+// and Coinbase backs it up: a public API with no key, no datacenter blocking,
+// and both a 24h summary and hourly candles. Whichever wins is named in the
+// reply, so a screen showing the wrong price can be traced to its source.
 const CRYPTO_TTL = 20;          // seconds; the device asks every 30
 const MAX_SYMBOLS = 4;          // keeps subrequests and device memory bounded
 const SPARK_POINTS = 24;        // one hourly close per point
+
+const BINANCE = "https://data-api.binance.vision";
+const COINBASE = "https://api.exchange.coinbase.com";
 
 export default {
   async fetch(request, env) {
@@ -253,52 +261,46 @@ function scaleSpark(closes) {
   return vals.map((v) => Math.round(((v - lo) / span) * 100));
 }
 
-async function binance(path) {
-  // cacheEverything makes Cloudflare hold the upstream answer at the edge, so a
-  // second device - or a browser hitting the same URL - costs Binance nothing.
-  const r = await fetch(BINANCE + path, {
+/**
+ * One cached upstream GET.
+ *
+ * cacheEverything makes Cloudflare hold the answer at the edge, so a second
+ * device - or a browser on the same URL - costs the exchange nothing. The
+ * User-Agent is set because some exchanges reject requests without one; it is
+ * not what Binance objects to, but Coinbase does care.
+ */
+async function upstream(url) {
+  const r = await fetch(url, {
     cf: { cacheTtl: CRYPTO_TTL, cacheEverything: true },
-    headers: { accept: "application/json" },
+    headers: {
+      accept: "application/json",
+      "user-agent": `DrFX-UltraOS/${BRIDGE_VERSION} (+https://github.com/drfxai/GeekMagic-Ultra)`,
+    },
   });
-  if (!r.ok) throw new Error(`binance ${r.status} on ${path.split("?")[0]}`);
+  if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
-async function handleCrypto(url, env) {
-  if (!authDevice(url, env)) return text("bad key", 403);
+/* ---- source: Binance --------------------------------------------- */
 
-  const symbols = (url.searchParams.get("symbols") || "BTCUSDT")
-    .split(",")
-    .map((s) => s.trim().toUpperCase().replace(/[^A-Z0-9]/g, ""))
-    .filter(Boolean)
-    .slice(0, MAX_SYMBOLS);
-
-  if (!symbols.length) return text("no usable symbols", 400);
-
-  let tickers;
-  try {
-    tickers = await binance(
-      `/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`
-    );
-  } catch (err) {
-    // 502 rather than 500: the failure is upstream, and the device backs off on
-    // any non-200 rather than hammering a service that is already unhappy.
-    return json({ error: String(err.message || err) }, 502);
-  }
+async function fromBinance(symbols) {
+  const tickers = await upstream(
+    `${BINANCE}/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`
+  );
 
   const bySymbol = new Map();
   for (const t of Array.isArray(tickers) ? tickers : [tickers]) {
     if (t && t.symbol) bySymbol.set(t.symbol, t);
   }
 
-  // Sparklines are a nice-to-have. One kline request failing must not cost the
+  // Sparklines are a nice-to-have. One candle request failing must not cost the
   // user their prices, so each is settled independently and an empty series
   // simply means the device draws no chart.
   const sparks = await Promise.all(
     symbols.map(async (s) => {
       try {
-        const k = await binance(
-          `/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=1h&limit=${SPARK_POINTS}`
+        const k = await upstream(
+          `${BINANCE}/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=1h&limit=${SPARK_POINTS}`
         );
         return scaleSpark((k || []).map((row) => row[4]));
       } catch (_) {
@@ -321,10 +323,113 @@ async function handleCrypto(url, env) {
       k: sparks[i],
     });
   });
+  return out;
+}
 
-  if (!out.length) return json({ error: "no matching symbols on Binance" }, 404);
+/* ---- source: Coinbase -------------------------------------------- */
 
-  return json({ v: BRIDGE_VERSION, ts: Date.now(), tickers: out });
+/** BTCUSDT -> BTC-USD. Coinbase quotes in USD far more widely than USDT. */
+function coinbaseProduct(symbol) {
+  return `${shortName(symbol)}-USD`;
+}
+
+async function fromCoinbase(symbols) {
+  // A 404 means that one pair is not listed, which is the caller's problem and
+  // should not condemn the source. Anything else - 500, a block, a timeout - is
+  // Coinbase being unavailable, and has to surface with its real status so the
+  // next source is tried and the error names the cause. Without this split, an
+  // exchange that is entirely down reports as "no matching pairs".
+  const failures = [];
+
+  const results = await Promise.all(
+    symbols.map(async (s) => {
+      const product = coinbaseProduct(s);
+
+      // /stats is the 24h summary. It has no change field, so it is derived
+      // from open and last - which is what "24h change" means anyway.
+      let stats;
+      try {
+        stats = await upstream(`${COINBASE}/products/${encodeURIComponent(product)}/stats`);
+      } catch (err) {
+        const status = String(err.message || err);
+        if (status !== "404") failures.push(status);
+        return null;
+      }
+
+      const last = Number(stats.last);
+      const open = Number(stats.open);
+      if (!isFinite(last) || last <= 0) return null;
+
+      const change = isFinite(open) && open > 0 ? ((last - open) / open) * 100 : 0;
+
+      let spark = [];
+      try {
+        // Candles come back newest-first as [time, low, high, open, close, vol].
+        const c = await upstream(
+          `${COINBASE}/products/${encodeURIComponent(product)}/candles?granularity=3600`
+        );
+        spark = scaleSpark((c || []).slice(0, SPARK_POINTS).reverse().map((row) => row[4]));
+      } catch (_) {
+        spark = [];
+      }
+
+      return {
+        s,
+        d: shortName(s),
+        p: formatPrice(last),
+        c: Number(change.toFixed(2)),
+        h: formatPrice(stats.high),
+        l: formatPrice(stats.low),
+        k: spark,
+      };
+    })
+  );
+
+  const out = results.filter(Boolean);
+  if (!out.length && failures.length) throw new Error(failures[0]);
+  return out;
+}
+
+/* ---- the route ---------------------------------------------------- */
+
+const SOURCES = [
+  { name: "binance", fn: fromBinance },
+  { name: "coinbase", fn: fromCoinbase },
+];
+
+async function handleCrypto(url, env) {
+  if (!authDevice(url, env)) return text("bad key", 403);
+
+  const symbols = (url.searchParams.get("symbols") || "BTCUSDT")
+    .split(",")
+    .map((s) => s.trim().toUpperCase().replace(/[^A-Z0-9]/g, ""))
+    .filter(Boolean)
+    .slice(0, MAX_SYMBOLS);
+
+  if (!symbols.length) return text("no usable symbols", 400);
+
+  // ?source=coinbase pins one source. Useful when a screen shows a price you
+  // want to attribute, and for testing a source that is not currently winning.
+  const want = (url.searchParams.get("source") || "").toLowerCase();
+  const chain = want ? SOURCES.filter((s) => s.name === want) : SOURCES;
+  if (!chain.length) return json({ error: `unknown source '${want}'` }, 400);
+
+  const tried = [];
+  for (const source of chain) {
+    try {
+      const tickers = await source.fn(symbols);
+      if (tickers.length) {
+        return json({ v: BRIDGE_VERSION, src: source.name, ts: Date.now(), tickers });
+      }
+      tried.push(`${source.name}: no matching pairs`);
+    } catch (err) {
+      tried.push(`${source.name}: ${String(err.message || err)}`);
+    }
+  }
+
+  // 502 rather than 500: the failure is upstream, and the device backs off on
+  // any non-200 rather than hammering services that are already unhappy.
+  return json({ error: `no source had ${symbols.join(",")}`, tried }, 502);
 }
 
 /* ------------------------------------------------------------------ */

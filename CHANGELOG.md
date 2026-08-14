@@ -3,6 +3,30 @@
 Notable changes, newest first. Versions follow the firmware, and the bridge
 tracks the same major number.
 
+## 2.1.1 — crypto: Binance blocks Cloudflare, so fall back to Coinbase
+
+Bridge only. No firmware change needed — redeploy the Worker and prices appear.
+
+**Binance returns 403 to Cloudflare Workers.** Not a geo-block and not a missing
+User-Agent: every User-Agent variant returns 200 from a residential IP and none
+from a Worker. Binance refuses Cloudflare's egress ranges outright, and no header
+can change that. The 2.1.0 crypto endpoint was therefore dead on arrival for
+anyone running the bridge as designed — the device reported a bare `HTTP 502`.
+
+- `/crypto` now tries a chain of sources and returns whichever answers, naming
+  the winner in a `src` field. Binance stays first, since it has the best
+  coverage and may work from edges not yet seen; **Coinbase** backs it up, with
+  a public API, no key, no datacenter blocking, and both a 24h summary and
+  hourly candles for the sparkline.
+- 24h change on Coinbase is derived from open and last, since `/stats` has no
+  change field. Expect a percentage a little different from Binance's — the two
+  measure from slightly different points.
+- `?source=binance|coinbase` pins one source, for attributing a price on screen
+  or testing one that is not currently winning.
+- A failing source now reports its real HTTP status. A 404 means one pair is not
+  listed there and does not condemn the source; anything else does, and is named
+  in the `tried` array so the cause is visible rather than guessed at.
+
 ## 2.1.0 — carousel and crypto
 
 ### The carousel
