@@ -116,9 +116,13 @@ of fields a 240×240 screen can use, scales the sparkline to 24 integers, and
 caches for 20 seconds at Cloudflare's edge. The device receives a few hundred
 bytes and does no floating-point arithmetic at all.
 
-Market data comes from `data-api.binance.vision`, Binance's public market-data
-host — no key, and no geo-blocking surprises depending on which edge the Worker
-happened to run in.
+**Where the prices come from.** The Worker tries a chain of sources and uses
+whichever answers, naming the winner in a `src` field so a price on screen can
+always be attributed. In practice that is **Coinbase**: Binance returns `403` to
+Cloudflare Workers — not a geo-block and not a missing User-Agent, both tested,
+but a flat refusal of Cloudflare's egress ranges. Binance stays first in the
+chain because it may work from edges we have not seen. Add `?source=coinbase` to
+pin one.
 
 ---
 
