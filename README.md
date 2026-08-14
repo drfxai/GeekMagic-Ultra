@@ -1,24 +1,11 @@
-# DrFX GodMode
+# DrFX Ultra OS
 
-TradingView signals on a GeekMagic SmallTV Ultra.
+A small framework for putting live trading signals on a GeekMagic SmallTV Ultra —
+firmware, an HTTPS bridge, a terminal client and a design system that keeps them
+looking like one product.
 
-**Start here → [SETUP.md](SETUP.md)**
-
-Configuring Cloudflare by hand? → **[CLOUDFLARE.md](CLOUDFLARE.md)**
-
----
-
-## Why there's a "bridge"
-
-TradingView only posts alerts to `https://` addresses. The SmallTV Ultra is an
-ESP8266 on your home Wi‑Fi serving plain `http://` on a private IP that the
-internet cannot see. Making the device itself reachable over HTTPS would mean
-port forwarding, dynamic DNS and a certificate the chip can't really validate.
-
-Instead the flow is reversed. A free Cloudflare Worker is the public HTTPS
-endpoint TradingView wants; the SmallTV polls that Worker outbound every few
-seconds. Nothing on your network is exposed, nothing on your router changes, and
-no computer needs to stay on.
+**New here → [SETUP.md](SETUP.md)** · Configuring Cloudflare by hand →
+**[CLOUDFLARE.md](CLOUDFLARE.md)**
 
 ```
 TradingView ──HTTPS POST──▶ Cloudflare Worker ──▶ KV store
@@ -28,27 +15,100 @@ TradingView ──HTTPS POST──▶ Cloudflare Worker ──▶ KV store
 
 ---
 
-## What's in here
+## Why there's a bridge
+
+TradingView only posts alerts to `https://` addresses. The SmallTV Ultra is an
+ESP8266 on your home Wi‑Fi serving plain `http://` on a private IP the internet
+cannot see. Making the device itself reachable over HTTPS would mean port
+forwarding, dynamic DNS and a certificate the chip cannot really validate.
+
+So the flow is reversed. A free Cloudflare Worker is the public HTTPS endpoint
+TradingView wants; the SmallTV polls it outbound every few seconds. Nothing on
+your network is exposed, nothing on your router changes, and no computer needs to
+stay switched on.
+
+---
+
+## The pieces
+
+| | What it is | Start at |
+|---|---|---|
+| **firmware/** | ESP8266 firmware: Wi‑Fi, settings server, poll loop, three screens | [`src/main.cpp`](firmware/src/main.cpp) |
+| **bridge/** | Cloudflare Worker — the HTTPS endpoint and a week of signal history | [`worker.js`](bridge/worker.js) |
+| **tools/drfx.py** | Terminal client: status, watch, push, timezone, diagnostics | [docs/CLI.md](docs/CLI.md) |
+| **ui/** | The design system rendered at true size, openable in a browser | [`screens-preview.html`](ui/screens-preview.html) |
+| **shared/** | `timezones.json` — one source of truth for the clock | below |
+| **docs/** | Design system and CLI reference | [DESIGN.md](docs/DESIGN.md) |
 
 ```
-bridge/
-  worker.js                 the Cloudflare Worker - paste into the dashboard
-  wrangler.toml             or deploy from the command line
 firmware/
-  platformio.ini            board + panel configuration for the SmallTV Ultra
+  platformio.ini            board + panel configuration
   src/main.cpp              boot, Wi-Fi, web server, polling loop
   src/config.h              settings struct, saved as /config.json
-  src/signal.h              the signal record and JSON parsing
-  src/display.h             the GodMode card, gauge and idle clock
+  src/signal_model.h        the signal record and JSON parsing
+  src/ui.h                  layout grid, colour derivation, primitives
+  src/display.h             the three screens
   src/web_ui.h              the settings page, served from flash
-tradingview/
-  alert-message.json        alert templates + full field reference
+bridge/
+  worker.js                 paste into the Cloudflare dashboard, or
+  wrangler.toml             deploy from the command line
+shared/
+  timezones.json            zones + POSIX rules, source of truth
 tools/
-  send-test-signal.py       fire a test signal without TradingView
-.github/workflows/build.yml GitHub compiles the .bin for you - no toolchain
-SETUP.md                    the step-by-step guide
-CLOUDFLARE.md               every Worker setting explained, plus an install roadmap
+  drfx.py                   the terminal client
+  gen_timezones.py          regenerates the picker inside web_ui.h
+  test_timezones.py         checks every rule against the IANA database
+tradingview/
+  alert-message.json        alert templates + field reference
+ui/
+  screens-preview.html      every screen at 240x240, in a browser
 ```
+
+---
+
+## The screens
+
+Minimal terminal: black field, hairline rules, one accent per screen, one large
+value carrying the meaning. Open
+[`ui/screens-preview.html`](ui/screens-preview.html) to see them at true size —
+no hardware needed. The full specification is in [docs/DESIGN.md](docs/DESIGN.md).
+
+**Signal** — symbol and direction, the AI score as a 48px numeral, a confidence
+bar, TP1/TP2/SL across the bottom, and a risk:reward the device computes from the
+levels (omitted rather than invented when they do not all parse).
+
+**Clock** — shown whenever no fresh signal is in hand. Large digits, a seconds
+rule, date, weekday, zone and live UTC offset.
+
+**Banner** — boot, setup mode and error states.
+
+---
+
+## The clock
+
+The device stores a **POSIX TZ rule**, not a fixed offset. `Europe/London` is
+saved as `GMT0BST,M3.5.0/1,M10.5.0`, which carries its own changeover dates — so
+the screen is right on the mornings either side of the daylight-saving switch
+without anyone touching a setting.
+
+Pick a zone on the **Clock** tab of the settings page, or from the terminal:
+
+```bash
+drfx tz set Europe/London      # or just: drfx tz set London
+```
+
+Both read [`shared/timezones.json`](shared/timezones.json). Edit that file and
+run `python tools/gen_timezones.py` to regenerate the picker baked into the
+firmware; `tools/test_timezones.py` then checks every rule against the real IANA
+database at four dates across the year. CI runs both.
+
+> POSIX offsets are **west-positive** — the opposite sign to the `UTC+05:30` that
+> people write. `Asia/Kolkata` is therefore `IST-5:30`. Getting this backwards is
+> the classic bug here, which is exactly why the test exists.
+
+Upgrading from 1.x keeps working: a config that only has the old `tzMinutes` is
+converted to an equivalent fixed-offset rule on first boot. Pick a named zone
+afterwards to gain automatic daylight saving.
 
 ---
 
@@ -63,35 +123,63 @@ CLOUDFLARE.md               every Worker setting explained, plus an install road
 | Updates | Admin → Firmware update, over Wi‑Fi |
 
 Hardware details confirmed against the
-[ESPHome device page](https://devices.esphome.io/devices/geekmagic-ultra/) for this board.
+[ESPHome device page](https://devices.esphome.io/devices/geekmagic-ultra/).
+
+**You do not need a toolchain.** Push to GitHub and
+[the build workflow](.github/workflows/build.yml) compiles both images and
+attaches them to the Actions run. Flash the SLIM image through the stock updater
+first, then update to the full image from Admin → Firmware update.
+
+---
+
+## Bridge API
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `POST /tv?key=…&device=…` | `WEBHOOK_KEY` | where TradingView posts |
+| `GET /latest?key=…&device=…&since=…` | `DEVICE_KEY` | what the device polls; `204` when nothing is new |
+| `GET /history?key=…&device=…&limit=…` | `DEVICE_KEY` | recent signals as JSON |
+| `GET /stats?key=…&device=…` | `DEVICE_KEY` | counts, plus the Worker's clock |
+| `GET /health` | — | plain `ok` |
+| `GET /` | — | human status page |
+
+Alert bodies may be JSON, loose `key=value` text, a bare `XAUUSD BUY` prefix, or
+the GodMode indicator's `[[DRFX]]` telemetry tag — see
+[`tradingview/alert-message.json`](tradingview/alert-message.json).
 
 ---
 
 ## Design notes
 
-**Why polling rather than a push.** An inbound connection to the device would need
-the internet to reach your LAN. Polling is outbound, so it works behind any router
-untouched. The Worker answers `204 No Content` when nothing has changed, so the
-quiet case costs the chip almost nothing.
+**Why polling rather than a push.** An inbound connection would need the internet
+to reach your LAN. Polling is outbound, so it works behind any router untouched.
+The Worker answers `204 No Content` when nothing has changed, so the quiet case
+costs the chip almost nothing.
 
 **Why no sprites.** A full 240×240 16‑bit frame buffer is 115 kB; the ESP8266 has
-roughly 40 kB of usable heap. Text is drawn with an explicit background colour and
-padding instead, which avoids flicker without the memory.
+roughly 40 kB of usable heap. Text is drawn with an explicit background colour
+and padding instead, which avoids flicker without the memory.
 
 **Why the TLS buffer is allocated per request.** BearSSL needs up to 16 kB for its
-receive buffer. It is created inside the poll function and freed immediately after,
-so that memory is only tied up for the second or so a request takes. On boot the
-firmware probes whether the server supports smaller TLS fragments; if it does, a
-1 kB buffer is used instead.
+receive buffer. It is created inside the poll function and freed immediately
+after, so that memory is only tied up for the second or so a request takes. On
+boot the firmware probes whether the server supports smaller TLS fragments; if it
+does, a 1 kB buffer is used instead.
 
-**Why certificate validation is skipped.** No root store fits comfortably alongside
-the display driver. The shared device key in the URL is what authenticates the
-exchange. Only signal data travels this path — see the security note at the end of
-SETUP.md, and treat the screen as a glanceable notification rather than a trade
-instruction.
+**Why certificate validation is skipped.** No root store fits comfortably
+alongside the display driver. The shared device key in the URL is what
+authenticates the exchange. Only signal data travels this path — see the security
+note at the end of SETUP.md, and treat the screen as a glanceable notification
+rather than a trade instruction.
 
 ---
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Changes to
+[`shared/timezones.json`](shared/timezones.json) must be followed by
+`python tools/gen_timezones.py`; CI fails otherwise.
+
 ## Licence
 
-MIT. Not affiliated with GeekMagic or TradingView.
+MIT — see [LICENSE](LICENSE). Not affiliated with GeekMagic or TradingView.

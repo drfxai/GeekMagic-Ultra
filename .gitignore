@@ -3,6 +3,10 @@ firmware/.pio/
 firmware/.vscode/
 .pio/
 
+# Python tools
+__pycache__/
+*.pyc
+
 # Cloudflare / wrangler
 .wrangler/
 node_modules/

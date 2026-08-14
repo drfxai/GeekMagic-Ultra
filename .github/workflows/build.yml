@@ -10,8 +10,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Cheap checks first: a two-minute firmware build is a slow way to find out
+  # that the timezone table was edited without regenerating the picker.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Timezone picker is in sync with shared/timezones.json
+        run: python tools/gen_timezones.py --check
+
+      - name: Every POSIX rule matches the IANA database
+        run: python tools/test_timezones.py
+
+      - name: Python tools parse
+        run: python -m compileall -q tools/
+
+      - name: Worker parses
+        run: node --check bridge/worker.js
+
   firmware:
     runs-on: ubuntu-latest
+    needs: checks
     steps:
       - uses: actions/checkout@v4
 
