@@ -1,0 +1,22 @@
+# Normalise line endings.
+#
+# Without this, editing a file on Windows can rewrite every line from LF to
+# CRLF, and git reports the whole file as changed. That is how a one-line edit
+# turns into a 1481-line diff that buries the actual change - which is exactly
+# what happened before this file existed.
+#
+# text=auto: store LF in the repository, check out whatever the platform wants.
+* text=auto eol=lf
+
+# PowerShell is happier with CRLF, and it is a Windows-only file anyway.
+*.ps1 text eol=crlf
+
+# Shell scripts must keep LF or the shebang breaks.
+*.sh text eol=lf
+
+# Never touch these. Line-ending conversion on a firmware image corrupts it.
+*.bin  -text
+*.zip  -text
+*.png  -text
+*.jpg  -text
+*.gif  -text
