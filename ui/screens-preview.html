@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DrFX ULTRA OS — v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#07080a; --panel:#0b0d10; --line:#1b2027; --line2:#11151a;
+  --tx:#e8ecf1; --dim:#79828f; --dim2:#4b535e;
+  --g:#31ff9a; --r:#ff3b52; --a:#ffb020; --c:#3ddbff; --v:#b98cff;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--tx);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+body{padding:44px 28px 80px;background-image:radial-gradient(900px 500px at 50% -10%,#0f1621 0%,transparent 70%)}
+
+/* ---------- page chrome ---------- */
+.top{max-width:1220px;margin:0 auto 40px;text-align:center}
+.brand{font-size:34px;font-weight:800;letter-spacing:-.02em}
+.brand b{color:var(--g)}
+.sub{margin-top:10px;font-size:11px;letter-spacing:.34em;color:var(--dim);text-transform:uppercase}
+.specs{margin:24px auto 0;display:flex;gap:1px;justify-content:center;flex-wrap:wrap;background:var(--line);border:1px solid var(--line);width:fit-content;border-radius:3px;overflow:hidden}
+.specs div{background:#0a0c0f;padding:9px 16px;font-size:10px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
+.specs div s{text-decoration:none;color:var(--tx)}
+.zoombar{margin-top:22px;display:flex;gap:8px;justify-content:center}
+.zoombar button{font-family:var(--mono);font-size:10px;letter-spacing:.16em;padding:7px 14px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer;border-radius:2px;transition:.15s}
+.zoombar button:hover{color:var(--tx);border-color:#2c343e}
+.zoombar button.on{color:#000;background:var(--g);border-color:var(--g);font-weight:700}
+
+.grid{max-width:1220px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:34px 26px;justify-items:center}
+.cell{display:flex;flex-direction:column;align-items:center;gap:14px}
+.cap{text-align:center}
+.cap .n{font-size:10px;color:var(--dim2);letter-spacing:.2em}
+.cap .t{font-size:12px;letter-spacing:.2em;text-transform:uppercase;margin-top:3px}
+
+/* ---------- device ---------- */
+.dev{position:relative;padding:13px;border-radius:20px;
+  background:linear-gradient(160deg,#23282f,#0d1013 42%,#191d22);
+  box-shadow:0 22px 48px -18px #000,0 0 0 1px #2b313a inset;}
+.dev::after{content:"GEEKMAGIC";position:absolute;left:0;right:0;bottom:-1px;text-align:center;font-size:7.5px;letter-spacing:.36em;color:#5a626d}
+.dev{padding-bottom:26px}
+.glass{border-radius:9px;overflow:hidden;box-shadow:0 0 0 1px #000,0 0 26px -6px rgba(49,255,154,.10)}
+
+/* ---------- the 240x240 screen ---------- */
+.screen{width:240px;height:240px;background:#000;display:flex;flex-direction:column;
+  font-size:11px;line-height:1.25;color:var(--tx);position:relative;overflow:hidden;--ac:var(--g)}
+.hd{flex:none;height:27px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 10px;border-bottom:1px solid var(--line);font-size:9.5px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
+.hd .id{color:var(--ac);font-weight:700}
+.bd{flex:1;padding:11px 10px;display:flex;flex-direction:column;min-height:0}
+.ft{flex:none;height:23px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 10px;border-top:1px solid var(--line);font-size:8.5px;letter-spacing:.14em;color:var(--dim2);text-transform:uppercase}
+
+.big{font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:.92;color:var(--ac)}
+.lbl{font-size:8.5px;letter-spacing:.22em;color:var(--dim2);text-transform:uppercase}
+.mut{color:var(--dim)}
+.ac{color:var(--ac)}
+.num{font-variant-numeric:tabular-nums}
+.row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line2);font-size:10.5px}
+.row:last-child{border-bottom:0}
+.row .k{color:var(--dim);letter-spacing:.1em;font-size:9.5px;text-transform:uppercase}
+.row .v{font-variant-numeric:tabular-nums}
+.mtr{height:2px;background:#171c22;position:relative;overflow:hidden}
+.mtr i{position:absolute;inset:0 auto 0 0;background:var(--ac)}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--ac);display:inline-block;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 18%,transparent)}
+.dot.off{background:#2b323b;box-shadow:none}
+.hr{height:1px;background:var(--line);margin:8px 0}
+.tag{font-size:8px;letter-spacing:.18em;padding:2px 6px;border:1px solid var(--ac);color:var(--ac);text-transform:uppercase}
+.blink{animation:bk 1.6s steps(1,end) infinite}
+@keyframes bk{0%,60%{opacity:1}61%,100%{opacity:.25}}
+.scan{position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(to bottom,rgba(255,255,255,.028) 0 1px,transparent 1px 3px)}
+
+/* clock controls */
+.tzwrap{width:266px;display:flex;flex-direction:column;gap:6px}
+.tzwrap label{font-size:8.5px;letter-spacing:.22em;color:var(--dim2)}
+select{width:100%;font-family:var(--mono);font-size:11px;padding:9px 10px;background:#0b0e12;
+  color:var(--g);border:1px solid var(--line);border-radius:2px;cursor:pointer;letter-spacing:.06em}
+select:focus{outline:none;border-color:var(--g)}
+.foot{max-width:1220px;margin:64px auto 0;padding-top:24px;border-top:1px solid var(--line);
+  display:flex;justify-content:space-between;font-size:9.5px;letter-spacing:.18em;color:var(--dim2);text-transform:uppercase;flex-wrap:wrap;gap:10px}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">DrFX <b>ULTRA OS</b></div>
+  <div class="sub">14 Screens &nbsp;·&nbsp; Minimal Terminal Build</div>
+  <div class="specs">
+    <div>240×240 <s>IPS</s></div><div>Wi-Fi <s>Live</s></div><div>API <s>Streaming</s></div><div>GIF / JPG</div>
+  </div>
+  <div class="zoombar">
+    <button data-z="1" class="on">1×  ACTUAL SIZE</button>
+    <button data-z="1.6">1.6×</button>
+    <button data-z="2.2">2.2×</button>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="foot"><span>DrFX AI · Ultra OS v2</span><span>Local render · no data leaves this page</span></div>
+
+<script>
+/* ============================================================
+   helpers
+============================================================ */
+const el = (h)=>{const d=document.createElement('div');d.innerHTML=h.trim();return d.firstElementChild;};
+function rnd(seed){let s=seed;return()=>{s=(s*16807)%2147483647;return(s-1)/2147483646;};}
+
+function screen(opts){
+  return `<div class="screen" style="--ac:${opts.ac||'var(--g)'}">
+    <div class="hd"><span class="id">${opts.id}</span><span>${opts.hr||''}</span></div>
+    <div class="bd">${opts.body}</div>
+    ${opts.ft?`<div class="ft">${opts.ft}</div>`:''}
+    <div class="scan"></div>
+  </div>`;
+}
+function cell(n,title,inner,extra=''){
+  return `<div class="cell">
+    <div class="dev"><div class="glass">${inner}</div></div>
+    ${extra}
+    <div class="cap"><div class="n">${String(n).padStart(2,'0')}</div><div class="t">${title}</div></div>
+  </div>`;
+}
+
+/* candles svg */
+function candles(seed,w,h,up){
+  const r=rnd(seed);let p=100,pts=[],n=24;
+  for(let i=0;i<n;i++){const o=p;const c=o+(r()-.42)*3.4;const hi=Math.max(o,c)+r()*1.4;const lo=Math.min(o,c)-r()*1.4;pts.push({o,c,hi,lo});p=c;}
+  const all=pts.flatMap(d=>[d.hi,d.lo]);const mx=Math.max(...all),mn=Math.min(...all);
+  const y=v=>h-((v-mn)/(mx-mn||1))*(h-4)-2;const cw=w/n;
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">
+  ${pts.map((d,i)=>{const x=i*cw+cw/2;const col=d.c>=d.o?'var(--g)':'var(--r)';
+    return `<line x1="${x}" x2="${x}" y1="${y(d.hi)}" y2="${y(d.lo)}" stroke="${col}" stroke-width="1" opacity=".55"/>
+    <rect x="${x-cw*0.3}" y="${Math.min(y(d.o),y(d.c))}" width="${cw*0.6}" height="${Math.max(1.2,Math.abs(y(d.o)-y(d.c)))}" fill="${col}"/>`;}).join('')}
+  </svg>`;
+}
+function spark(seed,w,h,col){
+  const r=rnd(seed);let p=50,pts=[];
+  for(let i=0;i<40;i++){p+=(r()-.44)*6;pts.push(p);}
+  const mx=Math.max(...pts),mn=Math.min(...pts);
+  const d=pts.map((v,i)=>`${i*(w/39)},${h-((v-mn)/(mx-mn||1))*(h-3)-1.5}`).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">
+    <polyline points="${d}" fill="none" stroke="${col}" stroke-width="1.4" stroke-linejoin="round"/>
+  </svg>`;
+}
+function ring(pct,size,col,txt,sub){
+  const R=size/2-7,C=2*Math.PI*R;
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+    <circle cx="${size/2}" cy="${size/2}" r="${R}" fill="none" stroke="#161b21" stroke-width="4"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${R}" fill="none" stroke="${col}" stroke-width="4"
+      stroke-dasharray="${C}" stroke-dashoffset="${C*(1-pct)}" stroke-linecap="butt"
+      transform="rotate(-90 ${size/2} ${size/2})"/>
+    <text x="50%" y="${sub?'47%':'54%'}" text-anchor="middle" fill="${col}" font-family="var(--mono)"
+      font-size="${size*0.29}" font-weight="800" letter-spacing="-1">${txt}</text>
+    ${sub?`<text x="50%" y="68%" text-anchor="middle" fill="#79828f" font-family="var(--mono)" font-size="8" letter-spacing="2">${sub}</text>`:''}
+  </svg>`;
+}
+
+/* ============================================================
+   SCREENS
+============================================================ */
+const S=[];
+
+/* 01 — Quantum dashboard */
+S.push([ 'Quantum Dashboard', screen({id:'DRFX QUANTUM',hr:'AI ●',body:`
+  <div class="lbl">Today P/L</div>
+  <div style="display:flex;align-items:flex-end;gap:6px;margin-top:4px">
+    <div class="big" style="font-size:52px">+2.84</div><div class="big" style="font-size:22px;padding-bottom:5px">%</div>
+  </div>
+  <div style="margin-top:9px">${spark(7,220,30,'var(--g)')}</div>
+  <div class="hr"></div>
+  <div style="display:flex;gap:0">
+    <div style="flex:1"><div class="lbl">Positions</div><div class="num" style="font-size:19px;font-weight:700">12</div></div>
+    <div style="flex:1;border-left:1px solid var(--line);padding-left:10px"><div class="lbl">Risk</div><div class="num ac" style="font-size:19px;font-weight:700">0.72%</div></div>
+  </div>`,
+  ft:`<span>Equity $12,840</span><span class="ac">● Engine Online</span>`}) ]);
+
+/* 02 — Live signal */
+S.push([ 'Live Signal', screen({id:'SIGNAL',hr:'14:02:41',body:`
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-size:19px;font-weight:700;letter-spacing:.02em">XAUUSD</div>
+    <div class="tag blink">New</div>
+  </div>
+  <div class="big" style="font-size:44px;margin-top:6px">BUY ↑</div>
+  <div style="margin-top:12px" class="lbl">Confidence</div>
+  <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+    <div class="mtr" style="flex:1"><i style="width:94%"></i></div>
+    <div class="num ac" style="font-size:13px;font-weight:700">94%</div>
+  </div>
+  <div class="hr"></div>
+  <div style="display:flex;text-align:center;font-variant-numeric:tabular-nums">
+    <div style="flex:1"><div class="lbl">TP1</div><div style="font-size:12.5px">3378</div></div>
+    <div style="flex:1;border-left:1px solid var(--line)"><div class="lbl">TP2</div><div style="font-size:12.5px">3386</div></div>
+    <div style="flex:1;border-left:1px solid var(--line)"><div class="lbl">SL</div><div style="font-size:12.5px;color:var(--r)">3362</div></div>
+  </div>`,
+  ft:`<span>Entry 3371.40</span><span>R:R 1 : 2.4</span>`}) ]);
+
+/* 03 — Crypto terminal */
+S.push([ 'Crypto Terminal', screen({id:'BTC / USD',hr:'Binance',ac:'var(--a)',body:`
+  <div class="big num" style="font-size:33px">118,420<span style="font-size:19px;color:var(--dim)">.50</span></div>
+  <div style="margin-top:5px;font-size:10.5px;color:var(--g)">▲ +2.84%&nbsp;<span class="mut">24H</span></div>
+  <div style="margin-top:8px;flex:1;min-height:0">${candles(31,220,74,true)}</div>
+  <div style="display:flex;gap:0;border-top:1px solid var(--line);padding-top:6px;margin-top:4px">
+    <div style="flex:1"><div class="lbl">High</div><div class="num" style="font-size:11px">119,802</div></div>
+    <div style="flex:1"><div class="lbl">Low</div><div class="num" style="font-size:11px">114,210</div></div>
+    <div style="flex:1"><div class="lbl">Vol</div><div class="num" style="font-size:11px">$42.8B</div></div>
+  </div>`}) ]);
+
+/* 04 — Candle mode */
+S.push([ 'Candle Mode', screen({id:'BTCUSD · 1H',hr:'Bullish',body:`
+  <div style="display:flex;gap:6px;flex:1;min-height:0">
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center">${candles(99,196,120,true)}</div>
+    <div style="width:34px;display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--dim2);text-align:right;padding:2px 0" class="num">
+      <span>120K</span><span>118K</span><span>116K</span><span>114K</span>
+    </div>
+  </div>
+  <div class="hr"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="lbl">Trend</div><div class="ac" style="font-size:13px;font-weight:700">BULLISH</div></div>
+    <div style="text-align:right"><div class="lbl">RSI</div><div class="num" style="font-size:13px;font-weight:700">68</div></div>
+  </div>
+  <div class="mtr" style="margin-top:6px"><i style="width:68%"></i></div>`}) ]);
+
+/* 05 — AI server monitor */
+S.push([ 'AI Server Monitor', screen({id:'AI CORE',hr:'LLM ●',ac:'var(--c)',body:`
+  <div class="row"><span class="k">GPU 1 · 73°C</span><span class="v ac">96%</span></div>
+  <div class="mtr" style="margin:-2px 0 8px"><i style="width:96%"></i></div>
+  <div class="row"><span class="k">GPU 2 · 69°C</span><span class="v ac">91%</span></div>
+  <div class="mtr" style="margin:-2px 0 8px"><i style="width:91%"></i></div>
+  <div class="row"><span class="k">VRAM</span><span class="v">42.8 / 48 GB</span></div>
+  <div class="mtr" style="margin:-2px 0 8px"><i style="width:89%"></i></div>
+  <div style="flex:1"></div>
+  <div style="display:flex;justify-content:space-between;font-size:9.5px">
+    <span class="mut">TOKENS/S</span><span class="num" style="font-weight:700">1,284</span>
+  </div>`,
+  ft:`<span>Llama-70B · Q4</span><span class="ac">● Online</span>`}) ]);
+
+/* 06 — Jarvis */
+S.push([ 'Jarvis Mode', screen({id:'JARVIS',hr:'Ready',ac:'var(--c)',body:`
+  <div style="display:flex;gap:12px;align-items:center;flex:1">
+    <div style="flex:none">${ring(.78,96,'var(--c)','J','ONLINE')}</div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:7px;font-size:9.5px">
+      <div style="display:flex;gap:7px;align-items:center"><span class="dot"></span><span class="mut">AI CORE</span></div>
+      <div style="display:flex;gap:7px;align-items:center"><span class="dot"></span><span class="mut">NETWORK</span></div>
+      <div style="display:flex;gap:7px;align-items:center"><span class="dot"></span><span class="mut">TRADING</span></div>
+      <div style="display:flex;gap:7px;align-items:center"><span class="dot off"></span><span style="color:var(--dim2)">VOICE</span></div>
+    </div>
+  </div>
+  <div class="hr"></div>
+  <div style="font-size:9.5px;color:var(--dim)">&gt; <span class="ac">listening for wake word</span><span class="blink">_</span></div>`}) ]);
+
+/* 07 — Security */
+S.push([ 'DrFX Security', screen({id:'DRFX SECURE',hr:'Armed',body:`
+  <div class="row"><span class="k">API Gateway</span><span class="dot"></span></div>
+  <div class="row"><span class="k">Database</span><span class="dot"></span></div>
+  <div class="row"><span class="k">Server</span><span class="dot"></span></div>
+  <div class="row"><span class="k">Firewall</span><span class="dot"></span></div>
+  <div class="row"><span class="k">Backup</span><span class="dot"></span></div>
+  <div style="flex:1"></div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--line);padding-top:7px">
+    <span class="lbl">Threats Blocked</span><span class="num ac" style="font-size:20px;font-weight:800">00</span>
+  </div>`,
+  ft:`<span>Last scan 41s ago</span><span class="ac">● Secure</span>`}) ]);
+
+/* 08 — Market sessions */
+S.push([ 'Market Sessions', screen({id:'SESSIONS',hr:'UTC+0',body:`
+  <div class="row"><span class="k">Sydney</span><span class="v" style="color:var(--dim2)">CLOSED</span></div>
+  <div class="row"><span class="k">Tokyo</span><span class="v" style="color:var(--dim2)">CLOSED</span></div>
+  <div class="row"><span class="k">London</span><span class="v ac">OPEN</span></div>
+  <div class="row"><span class="k">New York</span><span class="v ac">OPEN</span></div>
+  <div class="hr"></div>
+  <div class="lbl">London / NY Overlap</div>
+  <div class="mtr" style="margin-top:5px;height:3px"><i style="width:62%"></i></div>
+  <div style="flex:1"></div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <span class="lbl">NY Close In</span><span class="num" style="font-size:19px;font-weight:800">02:41:28</span>
+  </div>`}) ]);
+
+/* 09 — Risk monitor */
+S.push([ 'Trading Risk Monitor', screen({id:'RISK',hr:'Live',body:`
+  <div class="row"><span class="k">Balance</span><span class="v">$12,840.00</span></div>
+  <div class="row"><span class="k">Equity</span><span class="v">$12,612.40</span></div>
+  <div class="row"><span class="k">Risk Used</span><span class="v ac">1.18%</span></div>
+  <div class="row"><span class="k">Drawdown</span><span class="v" style="color:var(--a)">2.41%</span></div>
+  <div class="row"><span class="k">Open Positions</span><span class="v">4</span></div>
+  <div style="flex:1"></div>
+  <div class="lbl">Exposure</div>
+  <div style="position:relative;height:4px;margin-top:5px;background:linear-gradient(90deg,var(--g),var(--a) 62%,var(--r))">
+    <div style="position:absolute;left:31%;top:-4px;width:2px;height:12px;background:#fff"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:8px;color:var(--dim2);letter-spacing:.14em">
+    <span>SAFE</span><span>ELEVATED</span><span>CRITICAL</span>
+  </div>`}) ]);
+
+/* 10 — God mode */
+S.push([ 'God Mode', screen({id:'GOD MODE',hr:'XAUUSD',ac:'var(--v)',body:`
+  <div style="display:flex;align-items:center;gap:12px">
+    <div style="flex:none">${ring(.96,100,'var(--v)','96','AI SCORE')}</div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div><div class="lbl">Direction</div><div style="font-size:17px;font-weight:800;color:var(--g)">BUY</div></div>
+      <div><div class="lbl">Take Profit</div><div class="num" style="font-size:12px;color:var(--g)">3386 ✓</div></div>
+      <div><div class="lbl">Stop Loss</div><div class="num" style="font-size:12px;color:var(--r)">3362</div></div>
+    </div>
+  </div>
+  <div style="flex:1"></div>
+  <div style="display:flex;gap:4px">
+    ${[1,1,1,1,1,1,1,1,1,0].map(v=>`<div style="flex:1;height:3px;background:${v?'var(--v)':'#171c22'}"></div>`).join('')}
+  </div>`,
+  ft:`<span>7 models agree</span><span class="ac">● Consensus</span>`}) ]);
+
+/* 11 — Network NOC */
+S.push([ 'Network NOC', screen({id:'NETWORK',hr:'Wi-Fi ●',ac:'var(--c)',body:`
+  <div style="display:flex;align-items:baseline;gap:6px">
+    <div class="big num" style="font-size:40px">12</div><div class="lbl" style="font-size:11px">MS PING</div>
+  </div>
+  <div style="margin-top:6px">${spark(55,220,26,'var(--c)')}</div>
+  <div class="hr"></div>
+  <div class="row"><span class="k">Download</span><span class="v ac">943 Mbps</span></div>
+  <div class="row"><span class="k">Upload</span><span class="v ac">87 Mbps</span></div>
+  <div class="row"><span class="k">Packet Loss</span><span class="v">0.00%</span></div>`,
+  ft:`<span>SSID · DRFX-5G</span><span class="ac">● Connected</span>`}) ]);
+
+/* 12 — Server status */
+S.push([ 'Server Status', screen({id:'DRFX.IO',hr:'Prod',body:`
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div><div class="lbl">Uptime</div><div class="big num" style="font-size:31px">99.98<span style="font-size:16px">%</span></div></div>
+    <div class="tag">Online</div>
+  </div>
+  <div class="hr"></div>
+  <div class="row"><span class="k">CPU</span><span class="v">31%</span></div>
+  <div class="mtr" style="margin:-2px 0 7px"><i style="width:31%"></i></div>
+  <div class="row"><span class="k">RAM</span><span class="v">46%</span></div>
+  <div class="mtr" style="margin:-2px 0 7px"><i style="width:46%"></i></div>
+  <div class="row"><span class="k">API Latency</span><span class="v">18 ms</span></div>`,
+  ft:`<span>eu-west-2</span><span>Build 4.2.1</span>`}) ]);
+
+/* 13 — Alert */
+S.push([ 'Alert Mode', screen({id:'⚠ ALERT',hr:'Blocked',ac:'var(--r)',body:`
+  <div class="big blink" style="font-size:23px;line-height:1.12">UNAUTHORIZED<br>REQUEST</div>
+  <div class="hr"></div>
+  <div class="row"><span class="k">Source IP</span><span class="v num">185.■■■.■■■.■■■</span></div>
+  <div class="row"><span class="k">Endpoint</span><span class="v">/api/v2/keys</span></div>
+  <div class="row"><span class="k">Attempts</span><span class="v">17</span></div>
+  <div style="flex:1"></div>
+  <div style="border:1px solid var(--r);text-align:center;padding:6px 0;font-size:11px;letter-spacing:.28em;color:var(--r);font-weight:700">BLOCKED</div>`,
+  ft:`<span>14:02:41 UTC</span><span class="ac">● Firewall Active</span>`}) ]);
+
+/* 14 — CLOCK (new) */
+const CLOCK = `<div class="screen" style="--ac:var(--g)" id="clockScreen">
+  <div class="hd"><span class="id">WORLD CLOCK</span><span id="cZoneAbbr">—</span></div>
+  <div class="bd">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between">
+      <div class="big num" id="cTime" style="font-size:47px">--:--</div>
+      <div style="text-align:right;padding-top:6px">
+        <div class="num" id="cSec" style="font-size:17px;font-weight:700;color:var(--dim)">--</div>
+        <div class="lbl" id="cMer">&nbsp;</div>
+      </div>
+    </div>
+    <div class="mtr" style="margin-top:9px"><i id="cBar" style="width:0%"></i></div>
+    <div style="margin-top:9px;font-size:12px;letter-spacing:.06em" id="cDate">—</div>
+    <div class="lbl" style="margin-top:3px" id="cDay">—</div>
+    <div style="flex:1"></div>
+    <div class="hr"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="min-width:0"><div class="lbl">Timezone</div>
+        <div id="cZone" style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div></div>
+      <div style="text-align:right;flex:none;padding-left:8px"><div class="lbl">Offset</div>
+        <div class="num ac" id="cOff" style="font-size:12px;font-weight:700">—</div></div>
+    </div>
+  </div>
+  <div class="ft"><span id="cUtc">UTC —</span><span class="ac">● NTP Synced</span></div>
+  <div class="scan"></div>
+</div>`;
+
+const ZONES=[
+ ['Local Device Time',Intl.DateTimeFormat().resolvedOptions().timeZone],
+ ['London — GMT/BST','Europe/London'],['New York — EST/EDT','America/New_York'],
+ ['Chicago — CST','America/Chicago'],['Los Angeles — PST','America/Los_Angeles'],
+ ['Tokyo — JST','Asia/Tokyo'],['Sydney — AEST','Australia/Sydney'],
+ ['Hong Kong — HKT','Asia/Hong_Kong'],['Singapore — SGT','Asia/Singapore'],
+ ['Shanghai — CST','Asia/Shanghai'],['Dubai — GST','Asia/Dubai'],
+ ['Tehran — IRST','Asia/Tehran'],['Frankfurt — CET','Europe/Berlin'],
+ ['Zurich — CET','Europe/Zurich'],['Paris — CET','Europe/Paris'],
+ ['Moscow — MSK','Europe/Moscow'],['Mumbai — IST','Asia/Kolkata'],
+ ['São Paulo — BRT','America/Sao_Paulo'],['Johannesburg — SAST','Africa/Johannesburg'],
+ ['Auckland — NZST','Pacific/Auckland'],['UTC','UTC']
+];
+const picker = `<div class="tzwrap">
+  <label>SELECT TIMEZONE</label>
+  <select id="tzSelect">${ZONES.map((z,i)=>`<option value="${z[1]}"${i===0?' selected':''}>${z[0]}</option>`).join('')}</select>
+</div>`;
+
+/* ============================================================
+   render
+============================================================ */
+const grid=document.getElementById('grid');
+grid.insertAdjacentHTML('beforeend', cell(1,'World Clock',CLOCK,picker));
+S.forEach((s,i)=>grid.insertAdjacentHTML('beforeend', cell(i+2,s[0],s[1])));
+
+/* clock logic */
+const sel=document.getElementById('tzSelect');
+function part(dt,tz,opts){return new Intl.DateTimeFormat('en-GB',{timeZone:tz,...opts}).format(dt);}
+function offsetOf(tz,d){
+  const s=new Intl.DateTimeFormat('en-US',{timeZone:tz,timeZoneName:'longOffset'}).formatToParts(d)
+    .find(p=>p.type==='timeZoneName').value;      // e.g. GMT+05:30
+  return s==='GMT'?'UTC+00:00':s.replace('GMT','UTC');
+}
+function tick(){
+  const tz=sel.value, d=new Date();
+  const hh=part(d,tz,{hour:'2-digit',minute:'2-digit',hour12:false});
+  const ss=part(d,tz,{second:'2-digit'});
+  document.getElementById('cTime').textContent=hh;
+  document.getElementById('cSec').textContent=ss;
+  document.getElementById('cBar').style.width=(parseInt(ss,10)/60*100)+'%';
+  document.getElementById('cDate').textContent=part(d,tz,{day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+  document.getElementById('cDay').textContent=part(d,tz,{weekday:'long'}).toUpperCase();
+  document.getElementById('cZone').textContent=tz.replace(/_/g,' ');
+  document.getElementById('cOff').textContent=offsetOf(tz,d);
+  document.getElementById('cZoneAbbr').textContent=
+    new Intl.DateTimeFormat('en-US',{timeZone:tz,timeZoneName:'short'}).formatToParts(d)
+      .find(p=>p.type==='timeZoneName').value;
+  document.getElementById('cUtc').textContent='UTC '+d.toISOString().slice(11,19);
+  const h24=parseInt(hh,10);
+  document.getElementById('cMer').textContent=h24<12?'AM':'PM';
+}
+sel.addEventListener('change',tick); tick(); setInterval(tick,1000);
+
+/* zoom */
+document.querySelectorAll('.zoombar button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.zoombar button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  const z=parseFloat(b.dataset.z);
+  document.querySelectorAll('.screen').forEach(s=>{s.style.zoom=z;});
+  document.querySelectorAll('.dev').forEach(d=>{d.style.borderRadius=(20*z)+'px';d.style.padding=(13*z)+'px';d.style.paddingBottom=(26*z)+'px';});
+  grid.style.gridTemplateColumns=`repeat(auto-fill,minmax(${Math.round(300*z)}px,1fr))`;
+}));
+</script>
+</body>
+</html>

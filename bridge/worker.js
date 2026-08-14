@@ -10,10 +10,12 @@
  * forwarding, no dynamic DNS, no certificate on your LAN, no PC left switched on.
  *
  * Routes
- *   POST /tv?key=WEBHOOK_KEY[&device=main]   TradingView alert lands here
- *   GET  /latest?key=DEVICE_KEY&device=main&since=<ts>   device polls here
- *   GET  /health                              plain "ok"
- *   GET  /                                    small human status page
+ *   POST /tv?key=WEBHOOK_KEY[&device=main]              TradingView alert lands here
+ *   GET  /latest?key=DEVICE_KEY&device=main&since=<ts>  device polls here
+ *   GET  /history?key=DEVICE_KEY&device=main            recent signals, JSON
+ *   GET  /stats?key=DEVICE_KEY&device=main              counts and clock check
+ *   GET  /health                                        plain "ok"
+ *   GET  /                                              human status page
  *
  * Secrets (wrangler secret put ...)
  *   WEBHOOK_KEY   what TradingView puts in its URL
@@ -21,8 +23,9 @@
  * KV namespace binding: SIGNALS
  */
 
+const BRIDGE_VERSION = "2.0.0";
 const MAX_BODY = 8 * 1024;      // reject silly-sized alert bodies
-const HISTORY = 8;              // how many past signals to keep for the status page
+const HISTORY = 24;             // how many past signals to keep
 const TTL = 60 * 60 * 24 * 7;   // KV entries expire after a week
 
 export default {
@@ -30,10 +33,19 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
 
+    // The read endpoints are meant to be usable from a dashboard or a local
+    // tool in a browser, so answer preflights rather than making callers
+    // proxy around CORS. Writes (/tv) are excluded on purpose.
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+
     try {
       if (path === "/health") return text("ok");
       if (path === "/tv") return handleWebhook(request, url, env);
       if (path === "/latest") return handleLatest(request, url, env);
+      if (path === "/history") return handleHistory(url, env);
+      if (path === "/stats") return handleStats(url, env);
       if (path === "/") return handleStatus(url, env);
       return text("not found", 404);
     } catch (err) {
@@ -105,7 +117,68 @@ async function handleLatest(request, url, env) {
   // ESP8266 does not have to allocate memory to parse a payload it already has.
   if (since && store.latest.ts <= since) return new Response(null, { status: 204 });
 
+  // Shape unchanged from bridge 1.x. The firmware ignores unknown keys, so
+  // nothing here breaks an older device that has not been updated yet.
   return json(store.latest);
+}
+
+/* ------------------------------------------------------------------ */
+/* Read-only extras - for the CLI, dashboards and debugging            */
+/* ------------------------------------------------------------------ */
+
+function authDevice(url, env) {
+  const key = url.searchParams.get("key") || "";
+  return env.DEVICE_KEY && timingSafeEqual(key, env.DEVICE_KEY);
+}
+
+async function handleHistory(url, env) {
+  if (!authDevice(url, env)) return text("bad key", 403);
+
+  const device = sanitiseId(url.searchParams.get("device") || "main");
+  const limit = Math.min(HISTORY, Math.max(1, Number(url.searchParams.get("limit") || HISTORY) || HISTORY));
+  const store = await readStore(env, device);
+
+  return json({
+    device,
+    count: ((store && store.history) || []).length,
+    signals: ((store && store.history) || []).slice(0, limit),
+  });
+}
+
+/**
+ * Counts, plus the Worker's own clock.
+ *
+ * `now` is the useful part: the device has no battery-backed RTC and depends
+ * on NTP, so comparing this against what the screen shows is the quickest way
+ * to tell a wrong timezone from a clock that never synced at all.
+ */
+async function handleStats(url, env) {
+  if (!authDevice(url, env)) return text("bad key", 403);
+
+  const device = sanitiseId(url.searchParams.get("device") || "main");
+  const store = await readStore(env, device);
+  const hist = (store && store.history) || [];
+
+  const bySide = { BUY: 0, SELL: 0, FLAT: 0, OTHER: 0 };
+  const bySymbol = {};
+  for (const r of hist) {
+    if (bySide[r.side] === undefined) bySide.OTHER++;
+    else bySide[r.side]++;
+    if (r.symbol) bySymbol[r.symbol] = (bySymbol[r.symbol] || 0) + 1;
+  }
+
+  const latest = (store && store.latest) || null;
+  return json({
+    version: BRIDGE_VERSION,
+    device,
+    now: Date.now(),
+    nowIso: new Date().toISOString(),
+    kept: hist.length,
+    bySide,
+    bySymbol,
+    lastTs: latest ? latest.ts : null,
+    lastAgeSec: latest ? Math.round((Date.now() - latest.ts) / 1000) : null,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,29 +191,55 @@ async function handleStatus(url, env) {
   const rows = ((store && store.history) || [])
     .map(
       (r) =>
-        `<tr><td>${new Date(r.ts).toISOString().replace("T", " ").slice(0, 19)}Z</td>` +
-        `<td>${esc(r.symbol)}</td><td class="${r.side === "SELL" ? "s" : "b"}">${esc(r.side)}</td>` +
+        `<tr><td class="t">${new Date(r.ts).toISOString().replace("T", " ").slice(0, 19)}Z</td>` +
+        `<td>${esc(r.symbol)}</td><td class="${r.side === "SELL" ? "s" : r.side === "FLAT" ? "f" : "b"}">${esc(r.side)}</td>` +
         `<td>${r.score}</td><td>${esc(r.tp1)}</td><td>${esc(r.tp2)}</td><td>${esc(r.sl)}</td></tr>`
     )
     .join("");
 
-  const body = `<!doctype html><meta charset="utf-8"><title>DrFX GodMode Bridge</title>
+  // Styled to match the device: black field, hairline rules, mono type, one
+  // accent. Opening the Worker in a browser should look like the same product
+  // as the screen on the desk.
+  const body = `<!doctype html><meta charset="utf-8"><title>DrFX Ultra OS Bridge</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
- body{background:#0b0b12;color:#e6e6f0;font:14px/1.5 system-ui,sans-serif;margin:0;padding:32px}
- h1{font-size:18px;letter-spacing:.12em;color:#a78bfa;margin:0 0 4px}
- p{color:#8b8ba7;margin:0 0 24px}
- table{border-collapse:collapse;width:100%;max-width:760px}
- th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #22223a;font-variant-numeric:tabular-nums}
- th{color:#8b8ba7;font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
- .b{color:#34d399}.s{color:#f87171}
- code{background:#16162a;padding:2px 6px;border-radius:4px;color:#c4b5fd}
+ :root{--bg:#07080a;--line:#1b2027;--line2:#11151a;--txt:#e8ecf1;--dim:#79828f;--dim2:#4b535e;--acc:#31ff9a;--bad:#ff3b52}
+ *{box-sizing:border-box}
+ body{background:var(--bg);color:var(--txt);margin:0;padding:36px 22px 72px;
+   font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;-webkit-font-smoothing:antialiased}
+ .wrap{max-width:820px;margin:0 auto}
+ h1{font-size:13px;letter-spacing:.28em;color:var(--acc);margin:0 0 6px;font-weight:700}
+ .sub{color:var(--dim);margin:0 0 26px;font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+ table{border-collapse:collapse;width:100%}
+ th,td{text-align:left;padding:9px 12px 9px 0;border-bottom:1px solid var(--line2);font-variant-numeric:tabular-nums}
+ th{color:var(--dim2);font-weight:400;font-size:10px;text-transform:uppercase;letter-spacing:.2em;
+   border-bottom:1px solid var(--line)}
+ td.t{color:var(--dim)}
+ .b{color:var(--acc)}.s{color:var(--bad)}.f{color:var(--dim)}
+ .empty{color:var(--dim2)}
+ code{background:#0f1318;padding:2px 6px;border-radius:2px;color:var(--acc)}
+ footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim2);
+   font-size:10px;letter-spacing:.18em;text-transform:uppercase;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 </style>
-<h1>DRFX GODMODE BRIDGE</h1>
-<p>Device <code>${esc(device)}</code> &middot; ${store && store.latest ? "last signal " + new Date(store.latest.ts).toUTCString() : "no signals received yet"}</p>
-<table><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Score</th><th>TP1</th><th>TP2</th><th>SL</th></tr>${rows || '<tr><td colspan="7" style="color:#8b8ba7">Waiting for the first TradingView alert&hellip;</td></tr>'}</table>`;
+<div class="wrap">
+<h1>DRFX ULTRA OS &middot; BRIDGE</h1>
+<p class="sub">Device <code>${esc(device)}</code> &middot; ${
+    store && store.latest
+      ? "last signal " + new Date(store.latest.ts).toUTCString()
+      : "no signals received yet"
+  }</p>
+<table><tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th>Score</th><th>TP1</th><th>TP2</th><th>SL</th></tr>${
+    rows || '<tr><td colspan="7" class="empty">Waiting for the first TradingView alert&hellip;</td></tr>'
+  }</table>
+<footer><span>Bridge v${BRIDGE_VERSION}</span><span>${esc(new Date().toISOString().slice(0, 19))}Z</span></footer>
+</div>`;
 
   return new Response(body, {
-    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" },
+    headers: {
+      "content-type": "text/html;charset=utf-8",
+      "cache-control": "no-store",
+      "x-drfx-bridge": BRIDGE_VERSION,
+    },
   });
 }
 
@@ -332,11 +431,27 @@ function timingSafeEqual(a, b) {
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/* Read endpoints are authenticated by the key in the query string, not by
+   origin, so a wildcard here gives away nothing that the key does not already
+   gate - and it lets a local dashboard or the CLI's browser mode work. */
+const corsHeaders = () => ({
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400",
+});
+
+const baseHeaders = () => ({
+  "cache-control": "no-store",
+  "x-drfx-bridge": BRIDGE_VERSION,
+  ...corsHeaders(),
+});
+
 const json = (o, status = 200) =>
   new Response(JSON.stringify(o), {
     status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    headers: { "content-type": "application/json", ...baseHeaders() },
   });
 
 const text = (s, status = 200) =>
-  new Response(s, { status, headers: { "content-type": "text/plain", "cache-control": "no-store" } });
+  new Response(s, { status, headers: { "content-type": "text/plain", ...baseHeaders() } });

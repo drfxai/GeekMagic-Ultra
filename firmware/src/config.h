@@ -12,7 +12,7 @@
 #include <LittleFS.h>
 
 #define CFG_PATH "/config.json"
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "2.0.0"
 
 struct Config {
   // --- network ---
@@ -39,7 +39,18 @@ struct Config {
   uint8_t nightStart = 23;   // hour, 0-23
   uint8_t nightEnd = 7;
   bool showClock = true;
-  int16_t tzMinutes = 0;     // minutes offset from UTC, e.g. 210 for +03:30
+
+  // --- time ---
+  // A POSIX TZ rule, not a plain offset. "GMT0BST,M3.5.0/1,M10.5.0" carries the
+  // daylight-saving changeover dates with it, so the clock corrects itself in
+  // spring and autumn without anyone touching the settings. The settings page
+  // and the CLI both pick these from shared/timezones.json.
+  char tz[48] = "UTC0";
+  char tzName[34] = "UTC";       // the human label, e.g. "Europe/London"
+
+  // Superseded by tz. Kept so that a config written by firmware 1.x still
+  // produces the right clock on first boot after the update - see cfgLoad.
+  int16_t tzMinutes = 0;
 
   // --- theme (24-bit RGB) ---
   uint32_t cAccent = 0x8B5CF6;   // purple
@@ -58,6 +69,25 @@ extern Config cfg;
 inline void cfgSetStr(char *dst, size_t cap, const char *src) {
   if (!src) return;
   strlcpy(dst, src, cap);
+}
+
+/**
+ * Build a POSIX TZ rule from a plain minute offset.
+ *
+ * POSIX offsets are west-positive, the opposite sign to the "UTC+05:30" people
+ * write, which is the single most common way to get this wrong. There are no
+ * DST rules in the result because a bare offset does not carry any - it simply
+ * stays put all year, which is exactly what firmware 1.x did.
+ */
+inline void tzFromMinutes(int16_t m, char *out, size_t cap) {
+  if (m == 0) {
+    strlcpy(out, "UTC0", cap);
+    return;
+  }
+  int a = (m < 0) ? -m : m;
+  snprintf(out, cap, "<%c%02d%02d>%c%d:%02d",
+           (m < 0) ? '-' : '+', a / 60, a % 60,
+           (m < 0) ? '+' : '-', a / 60, a % 60);
 }
 
 inline bool cfgLoad() {
@@ -90,6 +120,21 @@ inline bool cfgLoad() {
   cfg.nightEnd = doc["nightEnd"] | cfg.nightEnd;
   cfg.showClock = doc["showClock"] | cfg.showClock;
   cfg.tzMinutes = doc["tzMinutes"] | cfg.tzMinutes;
+
+  // Migration from firmware 1.x: those builds only stored tzMinutes. If this
+  // config predates the TZ rules, turn the offset into an equivalent rule so
+  // the clock is right immediately; the user can pick a named zone later and
+  // gain automatic daylight saving.
+  if (doc["tz"].is<const char *>() && doc["tz"].as<const char *>()[0]) {
+    cfgSetStr(cfg.tz, sizeof(cfg.tz), doc["tz"] | "");
+    cfgSetStr(cfg.tzName, sizeof(cfg.tzName), doc["tzName"] | "");
+  } else {
+    tzFromMinutes(cfg.tzMinutes, cfg.tz, sizeof(cfg.tz));
+    snprintf(cfg.tzName, sizeof(cfg.tzName), "UTC%+03d:%02d",
+             cfg.tzMinutes / 60, (cfg.tzMinutes < 0 ? -cfg.tzMinutes : cfg.tzMinutes) % 60);
+  }
+  if (!cfg.tz[0]) strlcpy(cfg.tz, "UTC0", sizeof(cfg.tz));
+  if (!cfg.tzName[0]) strlcpy(cfg.tzName, "UTC", sizeof(cfg.tzName));
   cfg.cAccent = doc["cAccent"] | cfg.cAccent;
   cfg.cBuy = doc["cBuy"] | cfg.cBuy;
   cfg.cSell = doc["cSell"] | cfg.cSell;
@@ -121,7 +166,9 @@ inline bool cfgSave() {
   doc["nightStart"] = cfg.nightStart;
   doc["nightEnd"] = cfg.nightEnd;
   doc["showClock"] = cfg.showClock;
-  doc["tzMinutes"] = cfg.tzMinutes;
+  doc["tz"] = cfg.tz;
+  doc["tzName"] = cfg.tzName;
+  doc["tzMinutes"] = cfg.tzMinutes;   // written for 1.x downgrade safety
   doc["cAccent"] = cfg.cAccent;
   doc["cBuy"] = cfg.cBuy;
   doc["cSell"] = cfg.cSell;

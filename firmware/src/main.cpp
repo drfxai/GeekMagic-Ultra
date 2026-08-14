@@ -29,6 +29,7 @@
 #include <LittleFS.h>
 #include <TFT_eSPI.h>
 #include <time.h>
+#include <stdlib.h>   // setenv, for the timezone rule
 
 #include "config.h"
 #include "signal_model.h"
@@ -57,7 +58,7 @@ uint32_t pollFails = 0;
 int lastHttpCode = 0;
 String lastError;
 
-enum Screen { SCR_BOOT, SCR_SIGNAL, SCR_IDLE };
+enum Screen { SCR_BOOT, SCR_SIGNAL, SCR_CLOCK };
 Screen screen = SCR_BOOT;
 
 /* ================================================================== */
@@ -93,27 +94,87 @@ String bridgeHost() {
 
 bool bridgeIsHttps() { return String(cfg.bridge).startsWith("https://"); }
 
+/* ------------------------------------------------------------------ */
+/* Time and timezones                                                  */
+/*                                                                     */
+/* The zone is a POSIX TZ rule such as "GMT0BST,M3.5.0/1,M10.5.0", not a  */
+/* fixed offset, so newlib applies daylight saving itself and the screen  */
+/* is right on the mornings either side of the changeover.                */
+/* ------------------------------------------------------------------ */
+
+void applyTimezone() {
+  setenv("TZ", cfg.tz[0] ? cfg.tz : "UTC0", 1);
+  tzset();
+}
+
+/* Days since 1970-01-01 from a civil date. Howard Hinnant's algorithm, valid
+   for any date this device will ever see. Used only to measure the offset
+   between local and UTC, because newlib on the ESP8266 does not reliably
+   expose struct tm::tm_gmtoff. */
+static long daysFromCivil(int y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  const int era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return (long)era * 146097 + (long)doe - 719468;
+}
+
+static long tmToEpoch(const struct tm &t) {
+  return daysFromCivil(t.tm_year + 1900, (unsigned)t.tm_mon + 1, (unsigned)t.tm_mday) * 86400L
+         + t.tm_hour * 3600L + t.tm_min * 60L + t.tm_sec;
+}
+
+/* Seconds that local time is ahead of UTC right now, DST included. */
+long tzOffsetSeconds() {
+  time_t now = time(nullptr);
+  struct tm lt, gt;
+  localtime_r(&now, &lt);
+  gmtime_r(&now, &gt);
+  return tmToEpoch(lt) - tmToEpoch(gt);
+}
+
+void tzOffsetString(char *buf, size_t n) {
+  long off = tzOffsetSeconds();
+  char sign = off < 0 ? '-' : '+';
+  long a = off < 0 ? -off : off;
+  snprintf(buf, n, "UTC%c%02ld:%02ld", sign, a / 3600, (a % 3600) / 60);
+}
+
+/* Everything the clock screen shows, in one pass over localtime. */
+void fillClock(ClockView &c) {
+  c.valid = timeReady;
+  if (!timeReady) {
+    strlcpy(c.zone, cfg.tzName, sizeof(c.zone));
+    strlcpy(c.offset, "--", sizeof(c.offset));
+    return;
+  }
+
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+
+  snprintf(c.hhmm, sizeof(c.hhmm), "%02d:%02d", lt.tm_hour, lt.tm_min);
+  snprintf(c.ss, sizeof(c.ss), "%02d", lt.tm_sec);
+  c.secPct = (lt.tm_sec * 100) / 60;
+
+  strftime(c.date, sizeof(c.date), "%d %b %Y", &lt);
+  strftime(c.weekday, sizeof(c.weekday), "%A", &lt);
+  strftime(c.abbr, sizeof(c.abbr), "%Z", &lt);
+  for (char *p = c.date; *p; ++p) *p = toupper((unsigned char)*p);
+  for (char *p = c.weekday; *p; ++p) *p = toupper((unsigned char)*p);
+
+  strlcpy(c.zone, cfg.tzName[0] ? cfg.tzName : cfg.tz, sizeof(c.zone));
+  tzOffsetString(c.offset, sizeof(c.offset));
+}
+
 /* Local wall-clock hour, or -1 if we have no time yet */
 int localHour() {
   if (!timeReady) return -1;
-  time_t t = time(nullptr) + (time_t)cfg.tzMinutes * 60;
-  struct tm tmv;
-  gmtime_r(&t, &tmv);
-  return tmv.tm_hour;
-}
-
-void localHHMM(char *buf, size_t n) {
-  // Empty string when the clock is not set yet. Font 7 is a 7-segment face
-  // that only has digits and a colon, so it cannot render a "--:--" placeholder
-  // and the caller skips drawing instead.
-  if (!timeReady) {
-    buf[0] = '\0';
-    return;
-  }
-  time_t t = time(nullptr) + (time_t)cfg.tzMinutes * 60;
-  struct tm tmv;
-  gmtime_r(&t, &tmv);
-  snprintf(buf, n, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  return lt.tm_hour;
 }
 
 bool isNight() {
@@ -146,14 +207,27 @@ void refreshScreen(bool force = false) {
       applyBrightness();
     }
   } else {
-    char hhmm[8];
-    localHHMM(hhmm, sizeof(hhmm));
-    if (force || screen != SCR_IDLE) {
-      drawIdle(hhmm, current.valid() ? "SIGNAL EXPIRED" : "WAITING FOR SIGNAL");
-      screen = SCR_IDLE;
+    const char *why = current.valid() ? "SIGNAL EXPIRED" : "WAITING FOR SIGNAL";
+
+    if (!cfg.showClock) {
+      // The clock is switched off, so there is nothing to tick - draw once and
+      // leave the panel alone until something actually changes.
+      if (force || screen != SCR_CLOCK) {
+        drawBanner("NO SIGNAL", why, cfg.tzName, cfg.cAccent);
+        screen = SCR_CLOCK;
+        applyBrightness();
+      }
+      return;
+    }
+
+    ClockView c;
+    fillClock(c);
+    if (force || screen != SCR_CLOCK) {
+      drawClock(c, why);
+      screen = SCR_CLOCK;
       applyBrightness();
     } else {
-      updateIdleClock(hhmm);
+      updateClock(c);
     }
   }
 }
@@ -287,7 +361,8 @@ void handleGetConfig() {
   doc["nightStart"] = cfg.nightStart;
   doc["nightEnd"] = cfg.nightEnd;
   doc["showClock"] = cfg.showClock;
-  doc["tzMinutes"] = cfg.tzMinutes;
+  doc["tz"] = cfg.tz;
+  doc["tzName"] = cfg.tzName;
   doc["cAccent"] = cfg.cAccent;
   doc["cBuy"] = cfg.cBuy;
   doc["cSell"] = cfg.cSell;
@@ -346,7 +421,13 @@ void handleSetConfig() {
   if (doc["nightStart"].is<unsigned int>()) cfg.nightStart = doc["nightStart"].as<uint8_t>() % 24;
   if (doc["nightEnd"].is<unsigned int>()) cfg.nightEnd = doc["nightEnd"].as<uint8_t>() % 24;
   if (doc["showClock"].is<bool>()) cfg.showClock = doc["showClock"].as<bool>();
-  if (doc["tzMinutes"].is<int>()) cfg.tzMinutes = doc["tzMinutes"].as<int16_t>();
+
+  // A zone change takes effect immediately - no reboot. setenv/tzset is what
+  // configTime() does internally, so re-running it is enough; the NTP servers
+  // and the time already fetched are untouched.
+  bool tzChanged = putStr("tz", cfg.tz, sizeof(cfg.tz), false);
+  putStr("tzName", cfg.tzName, sizeof(cfg.tzName), false);
+  if (tzChanged) applyTimezone();
   if (doc["cAccent"].is<unsigned int>()) cfg.cAccent = doc["cAccent"].as<uint32_t>();
   if (doc["cBuy"].is<unsigned int>()) cfg.cBuy = doc["cBuy"].as<uint32_t>();
   if (doc["cSell"].is<unsigned int>()) cfg.cSell = doc["cSell"].as<uint32_t>();
@@ -384,6 +465,23 @@ void handleStatus() {
   // LittleFS is not persisting and everything will revert on the next reboot.
   doc["cfgOnFlash"] = LittleFS.exists(CFG_PATH);
   doc["timeOk"] = timeReady;
+
+  // The clock, as the device itself sees it. The settings page shows this next
+  // to the browser's own time so a wrong zone is obvious at a glance.
+  {
+    ClockView c;
+    fillClock(c);
+    JsonObject t = doc["clock"].to<JsonObject>();
+    t["tz"] = cfg.tz;
+    t["tzName"] = cfg.tzName;
+    t["abbr"] = c.abbr;
+    t["offset"] = c.offset;
+    t["time"] = c.valid ? (String(c.hhmm) + ":" + c.ss) : String("");
+    t["date"] = c.date;
+    t["weekday"] = c.weekday;
+    t["night"] = isNight();
+  }
+
   doc["httpCode"] = lastHttpCode;
   doc["fails"] = pollFails;
   doc["error"] = lastError;
@@ -430,9 +528,11 @@ void handleTest() {
   s.side = "BUY";
   s.score = 96;
   s.conf = 94;
+  s.entry = "3371.4";   // gives the footer a real risk:reward to compute
   s.tp1 = "3378";
   s.tp2 = "3386";
   s.sl = "3362";
+  s.tf = "15M";
   s.rxMillis = millis();
   current = s;
   refreshScreen(true);
@@ -542,6 +642,7 @@ void setup() {
     LittleFS.begin();
   }
   cfgLoad();
+  applyTimezone();   // before any localtime_r call, including in AP mode
 
   displayBegin();
   drawBanner("GOD MODE", "starting...", FW_VERSION, cfg.cAccent);
@@ -557,9 +658,12 @@ void setup() {
   MDNS.addService("http", "tcp", 80);
 #endif
 
-  // Time is only used for the idle clock and night dimming. TLS does not need
-  // it because certificate validation is skipped (see pollBridge).
-  configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+  // Time drives the clock screen and the night dimming. TLS does not need it
+  // because certificate validation is skipped (see pollBridge).
+  //
+  // This overload takes a POSIX TZ rule rather than an offset, so newlib does
+  // the daylight-saving arithmetic and localtime_r() returns real local time.
+  configTime(cfg.tz, "pool.ntp.org", "time.cloudflare.com");
 
   // Ask the bridge whether it supports small TLS fragments. If it does we can
   // use a 1 kB receive buffer instead of 16 kB, which is a lot on a chip with
@@ -613,9 +717,12 @@ void loop() {
     pollBridge();
   }
 
-  if (now - lastClock >= 15000) {
+  // The clock screen now shows seconds, so it ticks once a second rather than
+  // every 15. updateClock() redraws two text fields and a 2px bar, which is a
+  // few hundred microseconds of SPI - cheap enough to sit in the main loop.
+  if (now - lastClock >= 1000) {
     lastClock = now;
-    if (screen == SCR_IDLE) refreshScreen(false);
+    if (screen == SCR_CLOCK) refreshScreen(false);
     else if (!signalIsFresh()) refreshScreen(true);
   }
 

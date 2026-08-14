@@ -1,42 +1,41 @@
 /**
- * DrFX GodMode - screen rendering
+ * DrFX Ultra OS - screen rendering
  *
- * No sprites are used anywhere. A full 240x240 16-bit sprite would be 115 kB,
- * which the ESP8266 does not have, and we need to keep ~17 kB free for the
- * TLS receive buffer while polling. Flicker is avoided by drawing text with an
- * explicit background colour plus text padding instead of clearing regions.
+ * Three screens, all built from the primitives in ui.h:
+ *
+ *   drawBanner   boot / setup / error states
+ *   drawSignal   the trade card
+ *   drawClock    the world clock, shown whenever no fresh signal is on hand
+ *
+ * The previous build drew a 300-degree smooth arc gauge for the AI score. It
+ * has been removed on purpose: drawSmoothArc pulls in a chunk of float and
+ * anti-aliasing code that the slim image can ill afford, and at 240x240 a flat
+ * bar plus a 48px numeral is both more legible and cheaper. Nothing else read
+ * the gauge, so the change is local to this file.
  */
 #pragma once
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include "config.h"
+#include "ui.h"
 #include "signal_model.h"
 
 #define TFT_BL_PIN 5      // backlight, PWM, active LOW on this board
 
-// The slim build (see platformio.ini) drops the big font tables to fit the
-// stock Ultra's OTA slot. Font 4 is always present and is a reasonable stand-in
-// for both: asking TFT_eSPI for a font that was not compiled in draws nothing
-// at all, so these have to resolve at build time rather than at runtime.
-#if defined(LOAD_FONT6)
-  #define FONT_SCORE 6      // 48px numerals
-#else
-  #define FONT_SCORE 4
-#endif
-
-#if defined(LOAD_FONT7)
-  #define FONT_CLOCK 7      // 7-segment face
-#else
-  #define FONT_CLOCK 4
-#endif
-
-extern TFT_eSPI tft;
-
-/* 24-bit RGB from the settings page -> 16-bit RGB565 for the panel */
-inline uint16_t rgb(uint32_t c) {
-  return tft.color565((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
-}
+/* Everything the clock screen needs, filled in by main.cpp so that this file
+   stays free of time.h and the timezone handling. */
+struct ClockView {
+  bool valid = false;      // false until NTP has answered
+  char hhmm[8] = "";       // "15:46"
+  char ss[4] = "";         // "09"
+  char date[16] = "";      // "14 AUG 2026"
+  char weekday[12] = "";   // "FRIDAY"
+  char zone[34] = "";      // "Europe/London"
+  char abbr[8] = "";       // "BST"
+  char offset[12] = "";    // "UTC+01:00"
+  int secPct = 0;          // 0-100, drives the seconds rule
+};
 
 inline void setBacklight(uint8_t level) {
   analogWriteRange(255);
@@ -49,145 +48,166 @@ inline void displayBegin() {
   setBacklight(0);                 // stay dark until the first frame is drawn
   tft.init();
   tft.setRotation(cfg.rotation);
-  tft.fillScreen(rgb(cfg.cBg));
-  tft.setTextDatum(MC_DATUM);
+  uiClear();
 }
 
 /* ------------------------------------------------------------------ */
-/* Boot / status screens                                               */
+/* Boot / status banner                                                */
 /* ------------------------------------------------------------------ */
 
-inline void drawBanner(const char *line1, const char *line2, const char *line3, uint32_t colour) {
-  tft.fillScreen(rgb(cfg.cBg));
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextPadding(0);
+inline void drawBanner(const char *line1, const char *line2, const char *line3,
+                       uint32_t colour) {
+  uiClear();
+  uiHeader("DRFX ULTRA OS", String(FW_VERSION), cfg.cAccent);
 
-  tft.setTextColor(rgb(cfg.cAccent), rgb(cfg.cBg));
-  tft.drawString("GOD MODE", 120, 34, 4);
+  uiText(UI_PAD, 64, String(line1 ? line1 : ""), UI_F_HEAD, colour);
 
-  tft.setTextColor(rgb(colour), rgb(cfg.cBg));
-  tft.drawString(line1, 120, 104, 4);
+  if (line2 && *line2) uiText(UI_PAD, 108, String(line2), UI_F_BODY, cfg.cText);
+  if (line3 && *line3) uiText(UI_PAD, 132, String(line3), UI_F_BODY, uiDim());
 
-  tft.setTextColor(rgb(cfg.cText), rgb(cfg.cBg));
-  if (line2 && *line2) tft.drawString(line2, 120, 146, 2);
-  if (line3 && *line3) tft.drawString(line3, 120, 172, 2);
-
+  uiFooter("DRFX AI", "", cfg.cAccent);
   setBacklight(cfg.brightDay);
 }
 
 /* ------------------------------------------------------------------ */
-/* The GodMode signal card                                             */
+/* The trade card                                                      */
 /* ------------------------------------------------------------------ */
 
-inline void drawGauge(int score, uint32_t colour) {
-  const int cx = 120, cy = 104, r = 46, ir = 36;
-  const uint16_t track = tft.color565(0x2A, 0x2A, 0x40);
-  const uint16_t bg = rgb(cfg.cBg);
+/* Risk:reward from the levels, when all three parse as numbers.
+   Returns an empty String when it cannot be worked out honestly. */
+inline String riskReward(const Signal &s) {
+  float e = s.entry.toFloat();
+  float t = s.tp1.toFloat();
+  float l = s.sl.toFloat();
+  if (e <= 0 || t <= 0 || l <= 0) return String();
 
-  if (score < 0) score = 0;
-  if (score > 100) score = 100;
+  float reward = fabsf(t - e);
+  float risk = fabsf(e - l);
+  if (risk < 1e-6f || reward < 1e-6f) return String();
 
-  // TFT_eSPI angles: 0 is at 6 o'clock and increases clockwise.
-  // A 300-degree arc from 30 to 330 leaves a gap at the bottom.
-  tft.drawSmoothArc(cx, cy, r, ir, 30, 330, track, bg, true);
-  uint32_t end = 30 + (uint32_t)(300.0f * score / 100.0f);
-  if (end > 30) tft.drawSmoothArc(cx, cy, r, ir, 30, end, rgb(colour), bg, true);
+  float rr = reward / risk;
+  if (rr > 99.0f) return String();
 
-  char buf[8];
-  snprintf(buf, sizeof(buf), "%d", score);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextPadding(70);
-  tft.setTextColor(rgb(cfg.cText), bg);
-  tft.drawString(buf, cx, cy - 6, FONT_SCORE);
-
-  tft.setTextPadding(0);
-  tft.setTextColor(tft.color565(0x8B, 0x8B, 0xA7), bg);
-  tft.drawString("AI SCORE", cx, cy + 26, 1);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "1:%.1f", (double)rr);
+  return String(buf);
 }
 
 inline void drawSignal(const Signal &s) {
-  const uint16_t bg = rgb(cfg.cBg);
   const bool sell = (s.side == "SELL");
-  const uint32_t dir = sell ? cfg.cSell : cfg.cBuy;
+  const bool flat = (s.side == "FLAT");
+  const uint32_t dir = flat ? cfg.cAccent : (sell ? cfg.cSell : cfg.cBuy);
 
-  tft.fillScreen(bg);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextPadding(0);
+  uiClear();
 
-  // Title
-  tft.setTextColor(rgb(cfg.cAccent), bg);
-  tft.drawString("GOD MODE", 120, 22, 4);
+  String hdrRight = s.tf.length() ? s.tf : String("LIVE");
+  uiHeader("SIGNAL", hdrRight, cfg.cAccent);
 
-  // Gauge
-  drawGauge(s.score, dir);
+  /* --- symbol and direction ------------------------------------- */
+  uiText(UI_PAD, 38, s.symbol.length() ? s.symbol : String("---"),
+         UI_F_HEAD, cfg.cText);
 
-  // Symbol + direction.
-  // Note: Arduino's String has no operator+(const char*, String), so every
-  // concatenation below has to start from a String on the left.
-  String head(s.symbol);
   if (s.side.length()) {
-    head += "  ";
-    head += s.side;
+    int sideW = tft.textWidth(s.side, UI_F_HEAD);
+    uiText(UI_W - UI_PAD, 38, s.side, UI_F_HEAD, dir, TR_DATUM);
+
+    if (!flat) {
+      // Triangle sits just left of the word, vertically centred on it.
+      int ax = UI_W - UI_PAD - sideW - 14;
+      int top = 42, bot = 60;
+      if (sell) tft.fillTriangle(ax - 6, top, ax + 6, top, ax, bot, rgb(dir));
+      else      tft.fillTriangle(ax - 6, bot, ax + 6, bot, ax, top, rgb(dir));
+    }
   }
-  tft.setTextColor(rgb(dir), bg);
-  tft.drawString(head, 120, 166, 4);
 
-  // Arrow just past the end of the text, if it fits
-  int ax = 120 + tft.textWidth(head, 4) / 2 + 14;
-  if (ax < 230 && s.side.length() && s.side != "FLAT") {
-    if (sell) tft.fillTriangle(ax - 7, 159, ax + 7, 159, ax, 174, rgb(dir));
-    else      tft.fillTriangle(ax - 7, 174, ax + 7, 174, ax, 159, rgb(dir));
+  uiRule(72);
+
+  /* --- terminal events (TP hit, stopped out) --------------------- */
+  // These carry no fresh levels, so showing an empty TP/SL grid would be a
+  // lie. The note becomes the headline instead.
+  if (flat) {
+    uiLabel(UI_PAD, 88, "POSITION CLOSED");
+    uiText(UI_PAD, 104, s.note.length() ? s.note : String("closed"),
+           UI_F_HEAD, cfg.cText);
+    if (s.entry.length()) {
+      uiLabel(UI_PAD, 150, "PRICE");
+      uiText(UI_PAD, 163, s.entry, UI_F_HEAD, uiDim());
+    }
+    uiFooter(String("*") + hdrRight, "", cfg.cAccent);
+    return;
   }
 
-  auto orDash = [](const String &v) { return v.length() ? v : String("-"); };
+  /* --- score and confidence -------------------------------------- */
+  uiLabel(UI_PAD, 82, "AI SCORE");
+  {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", s.score);
+    uiText(UI_PAD, 94, String(buf), UI_F_NUM, dir);
+  }
 
-  // Targets
-  tft.setTextColor(rgb(cfg.cBuy), bg);
-  tft.setTextDatum(ML_DATUM);
-  tft.drawString(String("TP1 ") + orDash(s.tp1), 16, 198, 2);
-  tft.setTextDatum(MR_DATUM);
-  tft.drawString(String("TP2 ") + orDash(s.tp2), 224, 198, 2);
+  uiVRule(112, 80, 148);
 
-  tft.setTextColor(rgb(cfg.cSell), bg);
-  tft.setTextDatum(ML_DATUM);
-  tft.drawString(String("SL ") + orDash(s.sl), 16, 222, 2);
+  uiLabel(126, 82, "CONFIDENCE");
+  uiText(UI_W - UI_PAD, 94, String(s.conf) + "%", UI_F_HEAD, cfg.cText, TR_DATUM);
+  uiBar(126, 128, UI_W - UI_PAD - 126, 3, s.conf, cfg.cAccent);
 
-  tft.setTextColor(rgb(cfg.cAccent), bg);
-  tft.setTextDatum(MR_DATUM);
-  tft.drawString(String("CONF ") + s.conf + "%", 224, 222, 2);
+  uiRule(152);
 
-  tft.setTextDatum(MC_DATUM);
+  /* --- levels ----------------------------------------------------- */
+  uiCell(UI_PAD, 162, "TP1", s.tp1, cfg.cBuy);
+  uiCell(96, 162, "TP2", s.tp2, cfg.cBuy);
+  uiCell(UI_W - UI_PAD, 162, "SL", s.sl, cfg.cSell, TR_DATUM);
+
+  /* --- footer ------------------------------------------------------ */
+  String rr = riskReward(s);
+  String left = s.entry.length() ? (String("ENTRY ") + s.entry) : String("");
+  String right = rr.length() ? (String("*R:R ") + rr)
+                             : (s.note.length() ? s.note : String(""));
+  uiFooter(left, right, cfg.cAccent);
 }
 
 /* ------------------------------------------------------------------ */
-/* Idle clock (shown when no fresh signal)                             */
+/* World clock                                                         */
 /* ------------------------------------------------------------------ */
 
-inline void drawIdle(const char *hhmm, const char *sub) {
-  const uint16_t bg = rgb(cfg.cBg);
-  tft.fillScreen(bg);
-  tft.setTextDatum(MC_DATUM);
-
-  tft.setTextColor(rgb(cfg.cAccent), bg);
-  tft.drawString("GOD MODE", 120, 40, 4);
-
-  if (cfg.showClock && hhmm && *hhmm) {
-    tft.setTextColor(rgb(cfg.cText), bg);
-    tft.setTextPadding(200);
-    tft.drawString(hhmm, 120, 118, FONT_CLOCK);
-    tft.setTextPadding(0);
-  }
-
-  tft.setTextColor(tft.color565(0x8B, 0x8B, 0xA7), bg);
-  tft.drawString(sub ? sub : "WAITING FOR SIGNAL", 120, 190, 2);
+/* Shared by the full redraw and the once-a-second update so the two can never
+   drift apart. Padding is what stops the previous digits showing through. */
+inline void drawClockDigits(const ClockView &c) {
+  if (!c.valid) return;
+  uiText(UI_PAD, 44, String(c.hhmm), UI_F_CLOCK, cfg.cText, TL_DATUM, 176);
+  uiText(UI_W - UI_PAD, 66, String(c.ss), UI_F_HEAD, uiDim(), TR_DATUM, 44);
+  uiBar(UI_PAD, 108, UI_W - 2 * UI_PAD, 2, c.secPct, cfg.cAccent);
 }
 
-/* Redraw just the clock digits, no full clear - avoids visible flicker. */
-inline void updateIdleClock(const char *hhmm) {
-  if (!cfg.showClock || !hhmm || !*hhmm) return;
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(rgb(cfg.cText), rgb(cfg.cBg));
-  tft.setTextPadding(200);
-  tft.drawString(hhmm, 120, 118, FONT_CLOCK);
-  tft.setTextPadding(0);
+inline void drawClock(const ClockView &c, const char *sub) {
+  uiClear();
+  uiHeader("CLOCK", String(c.valid ? c.abbr : "NO TIME"), cfg.cAccent);
+
+  if (c.valid) {
+    drawClockDigits(c);
+  } else {
+    // Font 7 is a 7-segment face with no letters, so a placeholder has to be
+    // drawn in a text font rather than as "--:--".
+    uiText(UI_PAD, 54, String("SYNCING"), UI_F_HEAD, uiDim());
+    uiLabel(UI_PAD, 92, "WAITING FOR NTP");
+  }
+
+  uiRule(124);
+
+  uiLabel(UI_PAD, 134, "DATE");
+  uiText(UI_PAD, 147, String(c.valid ? c.date : "--"), UI_F_HEAD, cfg.cText);
+
+  uiLabel(UI_W - UI_PAD, 134, "DAY", uiDim(), TR_DATUM);
+  uiText(UI_W - UI_PAD, 149, String(c.valid ? c.weekday : "--"),
+         UI_F_BODY, uiDim(), TR_DATUM);
+
+  uiRule(180);
+  uiLabel(UI_PAD, 190, sub ? sub : "", cfg.cAccent);
+
+  uiFooter(String(c.zone), String(c.offset), cfg.cAccent);
+}
+
+/* Redraw only what changes each second - no clear, so no visible flicker. */
+inline void updateClock(const ClockView &c) {
+  drawClockDigits(c);
 }
