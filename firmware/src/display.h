@@ -20,6 +20,7 @@
 #include "config.h"
 #include "ui.h"
 #include "signal_model.h"
+#include "crypto_model.h"
 
 #define TFT_BL_PIN 5      // backlight, PWM, active LOW on this board
 
@@ -210,4 +211,92 @@ inline void drawClock(const ClockView &c, const char *sub) {
 /* Redraw only what changes each second - no clear, so no visible flicker. */
 inline void updateClock(const ClockView &c) {
   drawClockDigits(c);
+}
+
+/* ------------------------------------------------------------------ */
+/* Crypto ticker                                                       */
+/* ------------------------------------------------------------------ */
+
+/* The sparkline. Points arrive from the bridge already scaled to 0-100, so
+   plotting is two integer multiplications per point and no floating point at
+   all. Drawn as line segments rather than a filled area: at this size a fill
+   turns into a solid block and stops carrying any information. */
+inline void drawSpark(const Ticker &t, int x, int y, int w, int h, uint32_t colour) {
+  if (t.sparkN < 2) return;
+
+  const uint16_t c = rgb(colour);
+  int prevX = 0, prevY = 0;
+
+  for (uint8_t i = 0; i < t.sparkN; i++) {
+    int px = x + ((int32_t)w * i) / (t.sparkN - 1);
+    int py = y + h - ((int32_t)h * t.spark[i]) / 100;
+    if (i) tft.drawLine(prevX, prevY, px, py, c);
+    prevX = px;
+    prevY = py;
+  }
+
+  // Mark where the series ends, so a glance says which way "now" is.
+  tft.fillCircle(prevX, prevY, 2, c);
+}
+
+inline void drawCrypto(const Ticker &t, const CryptoSet &set) {
+  uiClear();
+
+  const bool up = t.change >= 0;
+  const uint32_t dir = up ? cfg.cBuy : cfg.cSell;
+
+  uiHeader("CRYPTO", String("BINANCE"), cfg.cAccent);
+
+  if (!t.valid()) {
+    uiText(UI_PAD, 60, String("NO DATA"), UI_F_HEAD, uiDim());
+    uiLabel(UI_PAD, 98, set.error.length() ? set.error.c_str() : "waiting for the bridge");
+    uiFooter("CRYPTO", "", cfg.cAccent);
+    return;
+  }
+
+  /* --- asset and 24h change --------------------------------------- */
+  uiText(UI_PAD, 36, t.name, UI_F_HEAD, cfg.cText);
+
+  {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%+.2f%%", (double)t.change);
+    String chg(buf);
+    int w = tft.textWidth(chg, UI_F_HEAD);
+    uiText(UI_W - UI_PAD, 36, chg, UI_F_HEAD, dir, TR_DATUM);
+
+    int ax = UI_W - UI_PAD - w - 13;
+    if (up) tft.fillTriangle(ax - 5, 56, ax + 5, 56, ax, 42, rgb(dir));
+    else    tft.fillTriangle(ax - 5, 42, ax + 5, 42, ax, 56, rgb(dir));
+  }
+
+  uiRule(68);
+
+  /* --- price -------------------------------------------------------- */
+  // Font 6 has no comma glyph, so no thousands separators: the integer part
+  // goes in the big face and the decimals follow smaller, baseline-aligned.
+  String whole, frac;
+  splitPrice(t.price, whole, frac);
+
+  if (whole.length()) {
+    uiText(UI_PAD, 78, whole, UI_F_NUM, cfg.cText);
+    if (frac.length()) {
+      int wx = UI_PAD + tft.textWidth(whole, UI_F_NUM) + 3;
+      if (wx < UI_W - UI_PAD) uiText(wx, 104, frac, UI_F_HEAD, uiDim());
+    }
+  } else {
+    // Sub-dollar prices would be a huge "0" and a wall of decimals.
+    uiText(UI_PAD, 88, frac, UI_F_HEAD, cfg.cText);
+  }
+
+  /* --- sparkline ----------------------------------------------------- */
+  const int chartY = 134, chartH = 56;
+  uiRule(chartY + chartH + 6, UI_PAD, UI_W - UI_PAD);
+  drawSpark(t, UI_PAD, chartY, UI_W - 2 * UI_PAD, chartH, dir);
+
+  /* --- footer -------------------------------------------------------- */
+  String range = t.low.length() && t.high.length()
+                     ? (t.low + " - " + t.high)
+                     : String("");
+  String age = set.ok ? (String("*") + set.ageSec() + "S AGO") : String("");
+  uiFooter(range, age, cfg.cAccent);
 }

@@ -7,6 +7,8 @@ library only, so it runs anywhere Python 3.9+ does with nothing to install.
 
     drfx status                       what the device is doing right now
     drfx watch                        the same, refreshed once a second
+    drfx crypto                       prices the device is holding
+    drfx next                         advance the carousel one screen
     drfx test                         put the demo card on the screen
     drfx push --symbol EURUSD --side SELL --score 71
     drfx send  --symbol XAUUSD --side BUY  --score 96      (through the bridge)
@@ -187,12 +189,36 @@ def render_status(s: dict, st: Style, bridge_name: str = "") -> str:
         line("bridge", s.get("error") or "not configured", st.RED)
 
     if s.get("timeOk"):
-        line("clock", f"{clk.get('time','')}  {clk.get('abbr','')}  {clk.get('offset','')}")
+        via = "   via bridge - NTP blocked" if clk.get("src") == "bridge" else ""
+        line("clock", f"{clk.get('time','')}  {clk.get('abbr','')}  {clk.get('offset','')}{via}",
+             st.AMB if clk.get("src") == "bridge" else "")
         line("time zone", clk.get("tzName", "-")
              + ("   (night mode)" if clk.get("night") else ""))
         line("date", f"{clk.get('weekday','')} {clk.get('date','')}")
     else:
         line("clock", "waiting for NTP", st.AMB)
+
+    rot = s.get("rotation") or {}
+    if rot.get("every"):
+        pinned = "   pinned" if rot.get("pinned") else ""
+        line("rotation", f"every {rot['every']}s   showing {rot.get('showing','-')}"
+                         f" ({int(rot.get('pos', 0)) + 1} of {rot.get('slots', 1)}){pinned}")
+    else:
+        line("rotation", "off", st.DIM)
+
+    cry = s.get("crypto") or {}
+    if not cry.get("on"):
+        line("crypto", "off", st.DIM)
+    elif cry.get("ok"):
+        pairs = cry.get("tickers") or []
+        line("crypto", f"{len(pairs)} pairs   {cry.get('ageSec', 0)}s ago", st.ACC)
+        for t in pairs:
+            chg = float(t.get("change") or 0)
+            colour = st.ACC if chg >= 0 else st.RED
+            line(f"  {t.get('name','?')}",
+                 f"{t.get('price','-'):>14}   {chg:+.2f}%", colour)
+    else:
+        line("crypto", cry.get("error") or "no data yet", st.RED)
 
     line("free memory", f"{s.get('heap','?')} bytes",
          st.RED if isinstance(s.get("heap"), int) and s["heap"] < 12000 else "")
@@ -253,6 +279,42 @@ def cmd_watch(a, st) -> int:
 def cmd_test(a, st) -> int:
     request(f"{a.device}/api/test", method="POST", user=a.user, password=a.password)
     print(f"{st.ACC}test card is on the screen{st.RESET}")
+    return 0
+
+
+def cmd_next(a, st) -> int:
+    """Step the carousel by hand - useful when checking a layout."""
+    r = request(f"{a.device}/api/next", method="POST",
+                user=a.user, password=a.password) or {}
+    print(f"{st.ACC}advanced to screen {int(r.get('pos', 0)) + 1} "
+          f"of {r.get('slots', '?')}{st.RESET}")
+    return 0
+
+
+def cmd_crypto(a, st) -> int:
+    """What the device currently holds, and a sparkline of what it is drawing."""
+    s = request(f"{a.device}/api/status")
+    cry = s.get("crypto") or {}
+
+    print(st.head("CRYPTO", cry.get("symbols", "")))
+    if not cry.get("on"):
+        print(f"{st.DIM}switched off - enable it on the Crypto tab, "
+              f"or with --symbols on the device{st.RESET}")
+        return 0
+    if not cry.get("ok"):
+        print(f"{st.RED}{cry.get('error') or 'no data yet'}{st.RESET}")
+        return 1
+
+    for t in cry.get("tickers") or []:
+        chg = float(t.get("change") or 0)
+        colour = st.ACC if chg >= 0 else st.RED
+        arrow = "▲" if chg >= 0 else "▼"
+        print(f"{st.TXT}{t.get('name','?'):<6}{st.RESET}"
+              f"{t.get('price','-'):>16}   {colour}{arrow} {chg:+.2f}%{st.RESET}"
+              f"   {st.DIM}{t.get('sym','')}  {t.get('spark',0)} spark pts{st.RESET}")
+
+    print(f"\n{st.DIM2}updated {cry.get('ageSec',0)}s ago · "
+          f"{cry.get('fails',0)} consecutive failures{st.RESET}")
     return 0
 
 
@@ -393,6 +455,19 @@ def cmd_doctor(a, st) -> int:
                "polling fine" if code in (200, 204)
                else (status.get("error") or "not configured"))
 
+        cry = status.get("crypto") or {}
+        if not cry.get("on"):
+            skip("crypto feed", "switched off")
+        else:
+            report("crypto feed", bool(cry.get("ok")),
+                   f"{len(cry.get('tickers') or [])} pairs, {cry.get('ageSec',0)}s ago"
+                   if cry.get("ok") else (cry.get("error") or "no data yet"))
+
+        # A clock coming from the bridge is not a failure, but it does mean this
+        # network drops UDP 123 - worth knowing before blaming the device.
+        if (status.get("clock") or {}).get("src") == "bridge":
+            skip("ntp", "blocked on this network - clock is coming from the bridge")
+
     # --- the bridge -----------------------------------------------------
     if not a.bridge:
         skip("bridge checks", "pass --bridge to include them")
@@ -473,6 +548,8 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--interval", type=float, default=1.0)
 
     sub.add_parser("test", help="show the demo card on the screen")
+    sub.add_parser("next", help="advance the carousel one screen")
+    sub.add_parser("crypto", help="prices the device is currently holding")
 
     add_signal_args(sub.add_parser("push", help="push a signal over the LAN"))
     add_signal_args(sub.add_parser("send", help="send a signal through the bridge"))
@@ -493,6 +570,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {
     "status": cmd_status, "watch": cmd_watch, "test": cmd_test,
+    "next": cmd_next, "crypto": cmd_crypto,
     "push": cmd_push, "send": cmd_send, "history": cmd_history,
     "tz": cmd_tz, "doctor": cmd_doctor,
 }

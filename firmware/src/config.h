@@ -12,7 +12,7 @@
 #include <LittleFS.h>
 
 #define CFG_PATH "/config.json"
-#define FW_VERSION "2.0.0"
+#define FW_VERSION "2.1.0"
 
 struct Config {
   // --- network ---
@@ -39,6 +39,19 @@ struct Config {
   uint8_t nightStart = 23;   // hour, 0-23
   uint8_t nightEnd = 7;
   bool showClock = true;
+
+  // --- screen rotation ---
+  // Seconds each screen holds before the next one takes over. 0 stops the
+  // carousel: whatever is on screen stays there.
+  uint16_t rotateSec = 15;
+  // A fresh signal interrupts the rotation and holds the screen for this long
+  // before rejoining it. 0 means it simply takes its turn like anything else.
+  uint16_t pinSec = 60;
+
+  // --- crypto ---
+  bool showCrypto = true;
+  uint16_t cryptoSec = 30;               // how often to ask the bridge
+  char symbols[64] = "BTCUSDT,ETHUSDT";  // comma separated, up to 4 used
 
   // --- time ---
   // A POSIX TZ rule, not a plain offset. "GMT0BST,M3.5.0/1,M10.5.0" carries the
@@ -119,6 +132,11 @@ inline bool cfgLoad() {
   cfg.nightStart = doc["nightStart"] | cfg.nightStart;
   cfg.nightEnd = doc["nightEnd"] | cfg.nightEnd;
   cfg.showClock = doc["showClock"] | cfg.showClock;
+  cfg.rotateSec = doc["rotateSec"] | cfg.rotateSec;
+  cfg.pinSec = doc["pinSec"] | cfg.pinSec;
+  cfg.showCrypto = doc["showCrypto"] | cfg.showCrypto;
+  cfg.cryptoSec = doc["cryptoSec"] | cfg.cryptoSec;
+  cfgSetStr(cfg.symbols, sizeof(cfg.symbols), doc["symbols"] | cfg.symbols);
   cfg.tzMinutes = doc["tzMinutes"] | cfg.tzMinutes;
 
   // Migration from firmware 1.x: those builds only stored tzMinutes. If this
@@ -143,6 +161,10 @@ inline bool cfgLoad() {
 
   if (cfg.pollSec < 2) cfg.pollSec = 2;
   if (cfg.rotation > 3) cfg.rotation = 0;
+  // Below about 4 seconds nothing on screen can be read before it is replaced,
+  // and a Binance fetch faster than 10s is wasted - the Worker caches for 20.
+  if (cfg.rotateSec && cfg.rotateSec < 4) cfg.rotateSec = 4;
+  if (cfg.cryptoSec < 10) cfg.cryptoSec = 10;
   return true;
 }
 
@@ -166,6 +188,11 @@ inline bool cfgSave() {
   doc["nightStart"] = cfg.nightStart;
   doc["nightEnd"] = cfg.nightEnd;
   doc["showClock"] = cfg.showClock;
+  doc["rotateSec"] = cfg.rotateSec;
+  doc["pinSec"] = cfg.pinSec;
+  doc["showCrypto"] = cfg.showCrypto;
+  doc["cryptoSec"] = cfg.cryptoSec;
+  doc["symbols"] = cfg.symbols;
   doc["tz"] = cfg.tz;
   doc["tzName"] = cfg.tzName;
   doc["tzMinutes"] = cfg.tzMinutes;   // written for 1.x downgrade safety

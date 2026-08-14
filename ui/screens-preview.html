@@ -35,6 +35,8 @@ body{padding:44px 28px 80px;background-image:radial-gradient(900px 500px at 50% 
 .cell{display:flex;flex-direction:column;align-items:center;gap:14px}
 .cap{text-align:center}
 .cap .n{font-size:10px;color:var(--dim2);letter-spacing:.2em}
+.badge{color:#000;background:var(--g);padding:1px 5px;border-radius:2px;font-size:8px;
+  letter-spacing:.14em;font-weight:700;vertical-align:1px}
 .cap .t{font-size:12px;letter-spacing:.2em;text-transform:uppercase;margin-top:3px}
 
 /* ---------- device ---------- */
@@ -90,7 +92,7 @@ select:focus{outline:none;border-color:var(--g)}
 
 <div class="top">
   <div class="brand">DrFX <b>ULTRA OS</b></div>
-  <div class="sub">14 Screens &nbsp;·&nbsp; Minimal Terminal Build</div>
+  <div class="sub">Minimal Terminal &nbsp;·&nbsp; <span style="color:var(--g)">SHIPPED</span> = in firmware today, the rest are concepts</div>
   <div class="specs">
     <div>240×240 <s>IPS</s></div><div>Wi-Fi <s>Live</s></div><div>API <s>Streaming</s></div><div>GIF / JPG</div>
   </div>
@@ -120,11 +122,15 @@ function screen(opts){
     <div class="scan"></div>
   </div>`;
 }
-function cell(n,title,inner,extra=''){
+/* `shipped` marks the screens that actually exist in firmware/src/display.h.
+   Everything else in this gallery is a concept for the design language - useful
+   for review, but do not read it as a feature list. */
+function cell(n,title,inner,extra='',shipped=false){
   return `<div class="cell">
     <div class="dev"><div class="glass">${inner}</div></div>
     ${extra}
-    <div class="cap"><div class="n">${String(n).padStart(2,'0')}</div><div class="t">${title}</div></div>
+    <div class="cap"><div class="n">${String(n).padStart(2,'0')}${
+      shipped?' <span class="badge">SHIPPED</span>':''}</div><div class="t">${title}</div></div>
   </div>`;
 }
 
@@ -399,9 +405,30 @@ const picker = `<div class="tzwrap">
 /* ============================================================
    render
 ============================================================ */
+/* The crypto ticker, as built. Mirrors drawCrypto() in firmware/src/display.h -
+   including the detail that the 48px font has no comma glyph, so the price is
+   split into a large integer part and smaller decimals with no separators. */
+const CRYPTO = screen({id:'CRYPTO',hr:'BINANCE',body:`
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div style="font-size:19px;font-weight:700">BTC</div>
+    <div style="font-size:17px;font-weight:700;color:var(--g)">▲ +2.84%</div>
+  </div>
+  <div style="height:1px;background:var(--line);margin:9px 0 0"></div>
+  <div style="display:flex;align-items:baseline;gap:3px;margin-top:9px">
+    <div class="big num" style="font-size:41px">118420</div>
+    <div class="num" style="font-size:17px;color:var(--dim)">.50</div>
+  </div>
+  <div style="flex:1;min-height:0;display:flex;align-items:flex-end;margin-top:6px">
+    ${spark(12,216,56,'var(--g)')}
+  </div>
+  <div style="height:1px;background:var(--line);margin-top:6px"></div>`,
+  ft:`<span>114210.00 - 119802.00</span><span class="ac">12S AGO</span>`});
+
 const grid=document.getElementById('grid');
-grid.insertAdjacentHTML('beforeend', cell(1,'World Clock',CLOCK,picker));
-S.forEach((s,i)=>grid.insertAdjacentHTML('beforeend', cell(i+2,s[0],s[1])));
+grid.insertAdjacentHTML('beforeend', cell(1,'World Clock',CLOCK,picker,true));
+grid.insertAdjacentHTML('beforeend', cell(2,'Crypto Ticker',CRYPTO,'',true));
+S.forEach((s,i)=>grid.insertAdjacentHTML('beforeend',
+  cell(i+3,s[0],s[1],'',s[0]==='Live Signal')));
 
 /* clock logic */
 const sel=document.getElementById('tzSelect');

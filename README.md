@@ -83,10 +83,42 @@ no hardware needed. The full specification is in [docs/DESIGN.md](docs/DESIGN.md
 bar, TP1/TP2/SL across the bottom, and a risk:reward the device computes from the
 levels (omitted rather than invented when they do not all parse).
 
-**Clock** — shown whenever no fresh signal is in hand. Large digits, a seconds
-rule, date, weekday, zone and live UTC offset.
+**Clock** — large digits, a seconds rule, date, weekday, zone and live UTC offset.
+
+**Crypto** — one screen per pair: asset, 24h change, a large price, a sparkline
+of the last 24 hours, and the 24h range.
 
 **Banner** — boot, setup mode and error states.
+
+They take turns. The carousel changes screen every 15 seconds by default, and a
+slot only exists while it has something to show — an expired signal or prices
+that have not arrived yet simply drop out of the rotation rather than displaying
+an empty card. A **fresh signal interrupts and holds the screen** for 60 seconds
+before rejoining, because a new entry is the one genuinely time-sensitive thing
+this device shows. Both intervals are configurable, and `0` stops the rotation.
+
+---
+
+## Crypto prices
+
+Set a watchlist of up to four Binance pairs on the **Crypto** tab, or from the
+terminal. Prices refresh every 30 seconds.
+
+```bash
+drfx crypto        # what the device is holding right now
+```
+
+**The device never calls Binance directly.** It does not negotiate small TLS
+fragments, so every direct HTTPS request would need a 16 kB receive buffer out of
+roughly 39 kB of free heap — while the signal poll is periodically asking for the
+same thing. Instead the Worker fetches Binance, trims the response to the handful
+of fields a 240×240 screen can use, scales the sparkline to 24 integers, and
+caches for 20 seconds at Cloudflare's edge. The device receives a few hundred
+bytes and does no floating-point arithmetic at all.
+
+Market data comes from `data-api.binance.vision`, Binance's public market-data
+host — no key, and no geo-blocking surprises depending on which edge the Worker
+happened to run in.
 
 ---
 
@@ -115,6 +147,14 @@ database at four dates across the year. CI runs both.
 Upgrading from 1.x keeps working: a config that only has the old `tzMinutes` is
 converted to an equivalent fixed-offset rule on first boot. Pick a named zone
 afterwards to gain automatic daylight saving.
+
+**If NTP never answers**, the device falls back to the Worker's clock. Plenty of
+routers and captive networks quietly drop UDP port 123, and without a fallback
+the screen simply never learns the time. `/stats` already reports the bridge's
+clock, so it fills the gap — accurate to a second or two, which is ample for a
+wall clock. The status page and `drfx status` both say when the time is coming
+from the bridge rather than NTP, since that is a fact about your network worth
+knowing.
 
 ---
 
@@ -157,6 +197,7 @@ summary.
 | `GET /latest?key=…&device=…&since=…` | `DEVICE_KEY` | what the device polls; `204` when nothing is new |
 | `GET /history?key=…&device=…&limit=…` | `DEVICE_KEY` | recent signals as JSON |
 | `GET /stats?key=…&device=…` | `DEVICE_KEY` | counts, plus the Worker's clock |
+| `GET /crypto?key=…&symbols=…` | `DEVICE_KEY` | Binance prices, trimmed, with a scaled sparkline |
 | `GET /health` | — | plain `ok` |
 | `GET /` | — | human status page |
 

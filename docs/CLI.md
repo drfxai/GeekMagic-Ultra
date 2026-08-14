@@ -73,10 +73,32 @@ the cursor rather than clearing the screen, so there is no flash between frames.
 
 `/api/status` is unauthenticated, so these two need no password.
 
-### `test`
+### `test` / `next`
 
-Puts the demo card on the screen — the quickest way to check a layout or a theme
-change. Needs the settings password.
+`test` puts the demo card on the screen — the quickest way to check a layout or a
+theme change. `next` steps the carousel on by one screen, which saves waiting out
+the timer while you are looking at something. Both need the settings password.
+
+### `crypto`
+
+What the device is currently holding, which is not the same question as what
+Binance says right now:
+
+```
+$ drfx crypto
+CRYPTO                                          BTCUSDT,ETHUSDT
+───────────────────────────────────────────────────────────────
+BTC          118420.50   ▲ +2.84%   BTCUSDT  24 spark pts
+ETH            3402.25   ▼ -1.12%   ETHUSDT  24 spark pts
+
+updated 12s ago · 0 consecutive failures
+```
+
+Prices reach the device through your Worker, never straight from Binance — the
+chip does not negotiate small TLS fragments, so a direct call would want a 16 kB
+receive buffer alongside the one the signal poll already uses. The Worker fetches
+Binance, trims the response and scales the sparkline; the device receives a few
+hundred bytes.
 
 ### `push` — device, over the LAN
 
