@@ -52,6 +52,28 @@ const SPARK_POINTS = 24;        // one hourly close per point
 
 const BINANCE = "https://data-api.binance.vision";
 const COINBASE = "https://api.exchange.coinbase.com";
+const COINGECKO = "https://api.coingecko.com/api/v3";
+const KRAKEN = "https://api.kraken.com/0/public";
+
+// Exchanges enforce sanctions and refuse whole regions. Binance and Coinbase
+// both answer 403 to this Worker while answering 200 to the same request from
+// a home connection a few metres away - the block follows the egress, not the
+// caller. Aggregators and smaller venues do not carry the same exposure, so the
+// chain leads with CoinGecko: it is not an exchange, it serves price, 24h range,
+// change and a sparkline in ONE request, and it has no regional gate.
+//
+// CoinGecko keys prices by coin id, not by trading pair. Only the pairs listed
+// here can be resolved; anything else falls through to the exchange sources,
+// which is the right order of preference anyway when they are reachable.
+const GECKO_IDS = {
+  BTC: "bitcoin", ETH: "ethereum", SOL: "solana", XRP: "ripple",
+  BNB: "binancecoin", ADA: "cardano", DOGE: "dogecoin", TRX: "tron",
+  AVAX: "avalanche-2", LINK: "chainlink", DOT: "polkadot", MATIC: "matic-network",
+  LTC: "litecoin", BCH: "bitcoin-cash", ATOM: "cosmos", UNI: "uniswap",
+  XLM: "stellar", ETC: "ethereum-classic", FIL: "filecoin", APT: "aptos",
+  ARB: "arbitrum", OP: "optimism", NEAR: "near", INJ: "injective-protocol",
+  SUI: "sui", TON: "the-open-network", SHIB: "shiba-inu", PEPE: "pepe",
+};
 
 export default {
   async fetch(request, env) {
@@ -407,11 +429,111 @@ async function fromCoinbase(symbols) {
   return out;
 }
 
+/* ---- source: CoinGecko ------------------------------------------- */
+
+/**
+ * One request covers every symbol: price, 24h range, 24h change and a
+ * sparkline. That makes this both the most reachable source and by far the
+ * cheapest - a single subrequest against four for two pairs on Coinbase.
+ *
+ * sparkline_in_7d is 168 hourly points; the last 24 are the same window the
+ * other sources produce.
+ */
+async function fromCoinGecko(symbols) {
+  const wanted = [];
+  for (const s of symbols) {
+    const id = GECKO_IDS[shortName(s)];
+    if (id) wanted.push({ symbol: s, id });
+  }
+  if (!wanted.length) return [];      // nothing this source can resolve
+
+  const ids = [...new Set(wanted.map((w) => w.id))].join(",");
+  const rows = await upstream(
+    `${COINGECKO}/coins/markets?vs_currency=usd&ids=${encodeURIComponent(ids)}` +
+      `&sparkline=true&price_change_percentage=24h&precision=full`
+  );
+
+  const byId = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) if (r && r.id) byId.set(r.id, r);
+
+  const out = [];
+  for (const w of wanted) {
+    const r = byId.get(w.id);
+    if (!r || !isFinite(Number(r.current_price))) continue;
+    const series = (r.sparkline_in_7d && r.sparkline_in_7d.price) || [];
+    out.push({
+      s: w.symbol,
+      d: shortName(w.symbol),
+      p: formatPrice(r.current_price),
+      c: Number(Number(r.price_change_percentage_24h || 0).toFixed(2)),
+      h: formatPrice(r.high_24h),
+      l: formatPrice(r.low_24h),
+      k: scaleSpark(series.slice(-SPARK_POINTS)),
+    });
+  }
+  return out;
+}
+
+/* ---- source: Kraken ---------------------------------------------- */
+
+/** Kraken quotes in USD and uses XBT for bitcoin. */
+function krakenPair(symbol) {
+  const base = shortName(symbol);
+  return `${base === "BTC" ? "XBT" : base}USD`;
+}
+
+/**
+ * Last resort, and price-only: Kraken's OHLC endpoint is a second request per
+ * symbol and this source exists to keep a number on the screen when everything
+ * else is blocked, not to draw charts.
+ */
+async function fromKraken(symbols) {
+  const pairs = symbols.map(krakenPair);
+  const res = await upstream(
+    `${KRAKEN}/Ticker?pair=${encodeURIComponent(pairs.join(","))}`
+  );
+  if (res && Array.isArray(res.error) && res.error.length && !res.result) {
+    throw new Error(res.error.join(" "));
+  }
+
+  const result = (res && res.result) || {};
+  const entries = Object.entries(result);
+
+  const out = [];
+  symbols.forEach((s, i) => {
+    // Kraken answers under its own canonical names, which interleave legacy
+    // asset-class markers: XBTUSD comes back as XXBTZUSD and ETHUSD as
+    // XETHZUSD. A substring match on the whole pair therefore fails - the Z
+    // sits between base and quote. Match base and quote independently instead.
+    const base = pairs[i].replace(/USD$/, "");
+    const hit = entries.find(([k]) => k.includes(base) && k.includes("USD"));
+    if (!hit) return;
+    const t = hit[1];
+    const last = Number(t.c && t.c[0]);
+    const open = Number(t.o);
+    if (!isFinite(last) || last <= 0) return;
+    out.push({
+      s,
+      d: shortName(s),
+      p: formatPrice(last),
+      c: Number((isFinite(open) && open > 0 ? ((last - open) / open) * 100 : 0).toFixed(2)),
+      h: formatPrice(t.h && t.h[1]),
+      l: formatPrice(t.l && t.l[1]),
+      k: [],
+    });
+  });
+  return out;
+}
+
 /* ---- the route ---------------------------------------------------- */
 
+// Ordered by reachability, not by preference. The exchanges give exact pair
+// prices and would be first in a world where they answered.
 const SOURCES = [
-  { name: "binance", fn: fromBinance },
+  { name: "coingecko", fn: fromCoinGecko },
   { name: "coinbase", fn: fromCoinbase },
+  { name: "binance", fn: fromBinance },
+  { name: "kraken", fn: fromKraken },
 ];
 
 async function handleCrypto(url, env) {
@@ -430,6 +552,31 @@ async function handleCrypto(url, env) {
   const want = (url.searchParams.get("source") || "").toLowerCase();
   const chain = want ? SOURCES.filter((s) => s.name === want) : SOURCES;
   if (!chain.length) return json({ error: `unknown source '${want}'` }, 400);
+
+  // ?probe=1 tries every source and reports what each one said, instead of
+  // stopping at the first that works. Diagnosing a blocked source otherwise
+  // means a deploy per guess, which is how this took as long as it did.
+  if (url.searchParams.get("probe")) {
+    const report = {};
+    await Promise.all(
+      SOURCES.map(async (s) => {
+        const t0 = Date.now();
+        try {
+          const r = await s.fn(symbols);
+          report[s.name] = {
+            ok: r.length > 0,
+            pairs: r.length,
+            ms: Date.now() - t0,
+            sample: r.length ? `${r[0].d} ${r[0].p}` : null,
+            spark: r.length ? r[0].k.length : 0,
+          };
+        } catch (err) {
+          report[s.name] = { ok: false, error: String(err.message || err), ms: Date.now() - t0 };
+        }
+      })
+    );
+    return json({ v: BRIDGE_VERSION, symbols, sources: report });
+  }
 
   const tried = [];
   for (const source of chain) {
