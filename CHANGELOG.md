@@ -3,6 +3,63 @@
 Notable changes, newest first. Versions follow the firmware, and the bridge
 tracks the same major number.
 
+## 2.1.0 — carousel and crypto
+
+### The carousel
+
+- Screens now take turns. Default 15 seconds each, configurable on the Display
+  tab; `0` stops the rotation.
+- **Slots are dynamic.** A screen exists only while it has something to show, so
+  an expired signal or a crypto fetch that has never succeeded drops out of the
+  rotation instead of displaying an empty card.
+- **A fresh signal interrupts and pins** for 60 seconds, then rejoins the
+  rotation. A new entry is the one genuinely time-sensitive thing on this device;
+  making it wait behind a price defeats the purpose of the screen.
+- `POST /api/next` and `drfx next` step the carousel by hand, which saves waiting
+  out the timer while checking a layout.
+
+### Crypto
+
+- New crypto screen: asset, 24h change, large price, a 24-hour sparkline and the
+  24h range. One screen per pair, up to four, set on the new **Crypto** tab.
+- New bridge route `GET /crypto`. The Worker fetches Binance, trims the response
+  to the fields a 240×240 screen can use, scales the sparkline to 24 integers and
+  caches for 20 seconds at the edge.
+- **The device never calls Binance directly.** It does not negotiate small TLS
+  fragments, so a direct request would want a 16 kB receive buffer out of roughly
+  39 kB of free heap — while the signal poll periodically wants the same. Going
+  through the Worker means one TLS host, a few hundred bytes on the wire, and no
+  floating-point arithmetic on the device at all.
+- Market data comes from `data-api.binance.vision` rather than `api.binance.com`,
+  which geo-blocks some regions and would have failed depending on which edge the
+  Worker happened to run in.
+- Sparklines degrade independently: if the klines request fails you still get
+  prices, just without a chart.
+- `drfx crypto` shows what the device is holding, which is not the same question
+  as what Binance says right now.
+
+### Clock reliability
+
+- **The clock now falls back to the bridge when NTP is silent.** Plenty of
+  routers and captive networks quietly drop UDP port 123, and without a fallback
+  the device simply never learns the time — which is exactly what was happening
+  on the author's own network. `/stats` already reported the Worker's clock, so it
+  fills the gap after 90 seconds of NTP silence, retrying at most once a minute.
+- Status, the settings page and `drfx doctor` all report whether the time came
+  from NTP or the bridge. A clock arriving over the bridge is not a fault, but it
+  is a fact about your network worth surfacing rather than hiding.
+
+### Internals
+
+- The TLS request path is now a single `bridgeGet()` used by the signal poll, the
+  crypto fetch and the clock fallback, so the heap guard exists in one place.
+- **At most one TLS session per pass through `loop()`.** Each holds a 16 kB
+  buffer for its lifetime, and two overlapping is what a reboot looks like, so
+  the three network jobs take turns rather than firing whenever their timers
+  happen to coincide.
+- `ui/screens-preview.html` marks which screens actually exist in firmware.
+  Previously all fourteen looked equally real; only three were.
+
 ## 2.0.1 — repository tidy-up
 
 No functional change to the firmware, the bridge or the CLI.

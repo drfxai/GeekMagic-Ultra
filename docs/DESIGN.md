@@ -157,9 +157,56 @@ levels, so it renders the note as the headline instead of an empty grid.
 Shown whenever no fresh signal is in hand. Ticks once a second: `updateClock()`
 redraws two text fields and a 2px bar without clearing, so there is no flicker.
 
+### Crypto
+
+```
+ CRYPTO                                BINANCE
+ ─────────────────────────────────────────────
+ BTC                                  ▲ +2.84%
+ ─────────────────────────────────────────────
+ 118420.50
+                                    ╱╲    ╱─●
+                            ╱╲   ╱─╯  ╲──╯
+                    ╱─╲──╱─╯  ╲─╯
+ ─────────────────────────────────────────────
+ 114210.00 - 119802.00                 12S AGO
+```
+
+One screen per pair, each its own slot in the rotation.
+
+**The 48px font has no comma glyph** — it carries `0-9`, `.`, `-` and `+` only.
+So there are no thousands separators: the integer part is drawn large and the
+decimals follow smaller, baseline-aligned. Sub-dollar prices would render as a
+huge `0` followed by a wall of decimals, so `splitPrice()` returns an empty
+integer part for those and the whole number is drawn in one smaller face
+instead.
+
+The sparkline arrives from the bridge already scaled to 24 integers from 0 to
+100, so plotting is two integer multiplications per point and no floating point
+at all. It is drawn as line segments rather than a filled area — at this size a
+fill becomes a solid block and stops carrying information. The last point gets a
+dot so a glance says which end is *now*.
+
 ### Banner
 
 Boot, setup mode and error states. Header, one large line, two secondary lines.
+
+---
+
+## The carousel
+
+Screens are not a fixed list. A slot exists only while it has something to show,
+so an expired signal or a crypto fetch that has never succeeded drops out of the
+rotation rather than displaying an empty card. `buildSlots()` rebuilds the list
+whenever content changes; the rotation timer walks it.
+
+A fresh signal is the exception: it interrupts, pins for a configurable period,
+then rejoins the rotation. The reasoning is that a new entry is the one thing on
+this device that is time-sensitive, and making it wait behind a price defeats
+the point of the screen.
+
+If a screen you add can be empty, make it *absent* rather than empty. A card
+reading "no data" that stays in the rotation is worse than no card at all.
 
 ---
 

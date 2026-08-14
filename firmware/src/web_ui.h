@@ -70,6 +70,7 @@ code{background:#0f1318;padding:2px 6px;border-radius:2px;color:var(--acc);font-
   <button data-t="wifi">Wi-Fi</button>
   <button data-t="bridge">Bridge</button>
   <button data-t="clock">Clock</button>
+  <button data-t="crypto">Crypto</button>
   <button data-t="display">Display</button>
   <button data-t="admin">Admin</button>
 </nav>
@@ -78,6 +79,7 @@ code{background:#0f1318;padding:2px 6px;border-radius:2px;color:var(--acc);font-
   <div id="stat"></div>
   <div class="bar">
     <button class="act" onclick="test()">Show a test signal</button>
+    <button class="ghost act" onclick="post('/api/next')">Next screen</button>
     <button class="ghost act" onclick="load()">Refresh</button>
   </div>
 </section>
@@ -122,7 +124,28 @@ code{background:#0f1318;padding:2px 6px;border-radius:2px;color:var(--acc);font-
   <div class="bar"><button class="act" onclick="save()">Save</button></div>
 </section>
 
+<section id="crypto">
+  <label class="chk"><input id="showCrypto" type="checkbox">Show crypto prices in the rotation</label>
+  <label>Pairs to track</label>
+  <div class="inline"><input id="symbols" placeholder="BTCUSDT,ETHUSDT">
+  <button class="ghost act" onclick="save()">Save</button></div>
+  <p class="hint">Binance pair names, comma separated, up to four. Each becomes its own screen in
+  the rotation. Examples: <code>BTCUSDT</code>, <code>ETHUSDT</code>, <code>SOLUSDT</code>,
+  <code>XRPUSDT</code>.</p>
+  <label>Refresh every (seconds)</label><input id="cryptoSec" type="number" min="10" max="900">
+  <p class="hint">Minimum 10. Prices come via your Cloudflare Worker, which caches Binance for
+  20 seconds &mdash; the device never talks to Binance directly, because a second TLS connection
+  does not fit comfortably in its memory alongside the signal poll.</p>
+  <div id="cryptolive"></div>
+</section>
+
 <section id="display">
+  <label>Change screen every (seconds)</label><input id="rotateSec" type="number" min="0" max="600">
+  <p class="hint">0 stops the rotation and leaves whatever is on screen. Screens with nothing to
+  show drop out on their own &mdash; an expired signal, or prices that have not arrived yet.</p>
+  <label>Hold a new signal for (seconds)</label><input id="pinSec" type="number" min="0" max="3600">
+  <p class="hint">A fresh signal interrupts the rotation and keeps the screen for this long before
+  rejoining it. 0 means it simply takes its turn.</p>
   <div class="row">
     <div><label>Daytime brightness</label><input id="brightDay" type="range" min="5" max="255"></div>
     <div><label>Night brightness</label><input id="brightNight" type="range" min="0" max="255"></div>
@@ -273,9 +296,11 @@ setInterval(function(){if($('clock').classList.contains('on'))tzPreview();},1000
    ever pressed Save. Only loadStatus() is on the timer now. */
 function loadConfig(){
  fetch('/api/config').then(function(r){return r.json()}).then(function(c){C=c;
-  ['ssid','ssid2','host','bridge','devId','adminUser'].forEach(function(k){$(k).value=c[k]||''});
-  ['pollSec','staleMin','brightDay','brightNight','nightStart','nightEnd'].forEach(function(k){$(k).value=c[k]});
+  ['ssid','ssid2','host','bridge','devId','adminUser','symbols'].forEach(function(k){$(k).value=c[k]||''});
+  ['pollSec','staleMin','brightDay','brightNight','nightStart','nightEnd',
+   'rotateSec','pinSec','cryptoSec'].forEach(function(k){$(k).value=c[k]});
   $('rotation').value=c.rotation;$('showClock').checked=!!c.showClock;
+  $('showCrypto').checked=!!c.showCrypto;
   ['cAccent','cBuy','cSell','cText','cBg'].forEach(function(k){$(k).value=hex(c[k])});
 
   // Match on the stored POSIX rule. Several cities share a rule (Paris and
@@ -296,20 +321,46 @@ function loadConfig(){
 function loadStatus(){
  fetch('/api/status').then(function(r){return r.json()}).then(function(s){
   $('sub').innerHTML='v'+s.fw+' &middot; '+(s.ap?'setup mode':s.ssid+' &middot; '+s.ip);
-  var g=s.signal,k=s.clock||{},rows=[
+  var g=s.signal,k=s.clock||{},r=s.rotation||{},cr=s.crypto||{};
+
+  // The clock quietly coming from the Worker instead of NTP is worth saying out
+  // loud - it means this network is dropping UDP 123, which is not obvious.
+  var clockTxt='<span class="warn">waiting for NTP</span>';
+  if(s.timeOk){clockTxt=(k.time||'')+' '+(k.abbr||'')+' '+(k.offset||'')
+    +(k.src==='bridge'?' <span class="warn">(via bridge - NTP blocked)</span>':'');}
+
+  var rot=r.every?('every '+r.every+'s &middot; showing '+(r.showing||'-')
+    +' ('+((r.pos|0)+1)+' of '+(r.slots||1)+')'+(r.pinned?' <span class="ok">pinned</span>':''))
+    :'<span class="dim">off</span>';
+
+  var cryptoTxt='<span class="dim">off</span>';
+  if(cr.on){cryptoTxt=cr.ok?('<span class="ok">'+(cr.tickers||[]).length+' pairs &middot; '+cr.ageSec+'s ago</span>')
+    :'<span class="bad">'+(cr.error||'no data yet')+'</span>';}
+
+  var rows=[
    ['Connection', s.ap?'<span class="bad">setup mode</span>':'<span class="ok">'+s.ssid+'</span>'],
    ['IP address', s.ip],
    ['Signal strength', s.rssi+' dBm'],
    ['Bridge', s.httpCode===200?'<span class="ok">new signal received</span>':(s.httpCode===204?'<span class="ok">connected, nothing new</span>':'<span class="bad">'+(s.error||'not configured')+'</span>')],
-   ['Device clock', s.timeOk?((k.time||'')+' '+(k.abbr||'')+' <span class="dim">'+(k.offset||'')+'</span>'):'<span class="warn">waiting for NTP</span>'],
+   ['Device clock', clockTxt],
    ['Time zone', (k.tzName||'-')+(k.night?' <span class="warn">(night mode)</span>':'')],
+   ['Rotation', rot],
+   ['Crypto', cryptoTxt],
    ['Small TLS buffers', s.mfln?'yes (low memory use)':'no (16 kB buffer)'],
    ['Settings on flash', s.cfgOnFlash?'<span class="ok">saved</span>':'<span class="bad">NOT SAVED - will reset on reboot</span>'],
    ['Free memory', s.heap+' bytes'],
    ['Uptime', Math.floor(s.uptime/3600)+'h '+Math.floor(s.uptime%3600/60)+'m'],
    ['Current signal', g.valid?(g.symbol+' '+g.side+' &middot; score '+g.score+' &middot; '+g.ageSec+'s ago'+(g.fresh?'':' <span class="bad">(expired)</span>')):'none yet']
   ];
-  $('stat').innerHTML=rows.map(function(r){return '<div class="kv"><span>'+r[0]+'</span><span>'+r[1]+'</span></div>'}).join('');
+  $('stat').innerHTML=rows.map(function(x){return '<div class="kv"><span>'+x[0]+'</span><span>'+x[1]+'</span></div>'}).join('');
+
+  // Live prices on the Crypto tab, straight from what the device holds - so it
+  // shows what the screen shows, not what a browser could fetch independently.
+  var live=(cr.tickers||[]).map(function(t){
+    var up=(t.change||0)>=0;
+    return '<div class="kv"><span>'+t.name+'</span><span>'+t.price+
+     ' <span class="'+(up?'ok':'bad')+'">'+(up?'+':'')+(t.change||0).toFixed(2)+'%</span></span></div>';}).join('');
+  $('cryptolive').innerHTML=live?('<div style="margin-top:22px"><label>On the device now</label>'+live+'</div>'):'';
  }).catch(function(){});
 }
 
@@ -321,6 +372,9 @@ function save(){
   pollSec:+$('pollSec').value,staleMin:+$('staleMin').value,rotation:+$('rotation').value,
   brightDay:+$('brightDay').value,brightNight:+$('brightNight').value,
   nightStart:+$('nightStart').value,nightEnd:+$('nightEnd').value,
+  rotateSec:+$('rotateSec').value,pinSec:+$('pinSec').value,
+  showCrypto:$('showCrypto').checked,cryptoSec:+$('cryptoSec').value,
+  symbols:$('symbols').value.toUpperCase().replace(/\s+/g,''),
   tz:o?o.value:'UTC0',tzName:o?o.dataset.name:'UTC',showClock:$('showClock').checked,
   cAccent:unhex($('cAccent').value),cBuy:unhex($('cBuy').value),cSell:unhex($('cSell').value),
   cText:unhex($('cText').value),cBg:unhex($('cBg').value)};

@@ -29,10 +29,12 @@
 #include <LittleFS.h>
 #include <TFT_eSPI.h>
 #include <time.h>
-#include <stdlib.h>   // setenv, for the timezone rule
+#include <sys/time.h>   // settimeofday, for the bridge clock fallback
+#include <stdlib.h>     // setenv, for the timezone rule
 
 #include "config.h"
 #include "signal_model.h"
+#include "crypto_model.h"
 #include "display.h"
 #include "web_ui.h"
 
@@ -51,15 +53,49 @@ bool mflnOk = false;
 bool timeReady = false;
 
 Signal current;
+CryptoSet crypto;
+
 uint32_t lastPoll = 0;
 uint32_t lastClock = 0;
 uint32_t lastNightCheck = 0;
+uint32_t lastCrypto = 0;
+uint32_t lastTimeTry = 0;
 uint32_t pollFails = 0;
+uint32_t cryptoFails = 0;
 int lastHttpCode = 0;
 String lastError;
+const char *timeSource = "none";   // none / ntp / bridge
 
-enum Screen { SCR_BOOT, SCR_SIGNAL, SCR_CLOCK };
+enum Screen { SCR_BOOT, SCR_SIGNAL, SCR_CLOCK, SCR_CRYPTO };
 Screen screen = SCR_BOOT;
+
+/* ------------------------------------------------------------------ */
+/* The carousel                                                        */
+/*                                                                     */
+/* Screens are not a fixed list: a slot only exists while it has        */
+/* something to show, so an expired signal or a crypto fetch that has   */
+/* never succeeded simply drops out of the rotation instead of showing  */
+/* an empty card. The list is rebuilt whenever content changes.         */
+/* ------------------------------------------------------------------ */
+
+enum SlotKind : uint8_t { SLOT_SIGNAL, SLOT_CLOCK, SLOT_CRYPTO };
+
+struct Slot {
+  uint8_t kind;
+  uint8_t idx;    // which ticker, for SLOT_CRYPTO
+};
+
+Slot slots[2 + CRYPTO_MAX];
+uint8_t slotCount = 0;
+uint8_t slotPos = 0;
+uint8_t cryptoShown = 0xFF;    // which ticker is currently drawn
+uint32_t lastRotate = 0;
+uint32_t pinUntil = 0;         // millis() until which a fresh signal holds
+
+/* Signed comparison so this still behaves at the 49-day millis() rollover. */
+inline bool pinActive() {
+  return pinUntil != 0 && (int32_t)(pinUntil - millis()) > 0;
+}
 
 /* ================================================================== */
 /* small helpers                                                       */
@@ -199,54 +235,136 @@ bool signalIsFresh() {
 /* screen refresh                                                      */
 /* ================================================================== */
 
-void refreshScreen(bool force = false) {
-  if (signalIsFresh()) {
-    if (force || screen != SCR_SIGNAL) {
-      drawSignal(current);
-      screen = SCR_SIGNAL;
-      applyBrightness();
-    }
-  } else {
-    const char *why = current.valid() ? "SIGNAL EXPIRED" : "WAITING FOR SIGNAL";
+void buildSlots() {
+  uint8_t before = slotCount;
+  slotCount = 0;
 
-    if (!cfg.showClock) {
-      // The clock is switched off, so there is nothing to tick - draw once and
-      // leave the panel alone until something actually changes.
-      if (force || screen != SCR_CLOCK) {
-        drawBanner("NO SIGNAL", why, cfg.tzName, cfg.cAccent);
-        screen = SCR_CLOCK;
-        applyBrightness();
-      }
-      return;
-    }
+  if (signalIsFresh()) slots[slotCount++] = {SLOT_SIGNAL, 0};
+  if (cfg.showClock) slots[slotCount++] = {SLOT_CLOCK, 0};
 
-    ClockView c;
-    fillClock(c);
-    if (force || screen != SCR_CLOCK) {
-      drawClock(c, why);
-      screen = SCR_CLOCK;
-      applyBrightness();
-    } else {
-      updateClock(c);
+  if (cfg.showCrypto && crypto.ok) {
+    for (uint8_t i = 0; i < crypto.n && slotCount < (uint8_t)(2 + CRYPTO_MAX); i++) {
+      if (crypto.has(i)) slots[slotCount++] = {SLOT_CRYPTO, i};
     }
   }
+
+  // Never leave the panel with nothing to draw. With the clock switched off and
+  // no data yet, the clock slot renders a plain "no signal" card instead.
+  if (!slotCount) slots[slotCount++] = {SLOT_CLOCK, 0};
+
+  if (slotCount != before) slotPos = 0;
+  if (slotPos >= slotCount) slotPos = 0;
+}
+
+/* Draw whatever slot is current. `force` redraws even if it is already up,
+   which is what a settings change or a new signal needs. */
+void drawCurrentSlot(bool force) {
+  if (!slotCount) return;
+  const Slot s = slots[slotPos];
+
+  switch (s.kind) {
+    case SLOT_SIGNAL:
+      if (force || screen != SCR_SIGNAL) {
+        drawSignal(current);
+        screen = SCR_SIGNAL;
+        applyBrightness();
+      }
+      break;
+
+    case SLOT_CRYPTO:
+      if (force || screen != SCR_CRYPTO || cryptoShown != s.idx) {
+        drawCrypto(crypto.t[s.idx], crypto);
+        screen = SCR_CRYPTO;
+        cryptoShown = s.idx;
+        applyBrightness();
+      }
+      break;
+
+    case SLOT_CLOCK:
+    default:
+      if (!cfg.showClock) {
+        // Nothing on this card ticks, so draw it once and leave the panel alone.
+        if (force || screen != SCR_CLOCK) {
+          drawBanner("NO SIGNAL",
+                     current.valid() ? "SIGNAL EXPIRED" : "WAITING FOR SIGNAL",
+                     cfg.tzName, cfg.cAccent);
+          screen = SCR_CLOCK;
+          applyBrightness();
+        }
+        return;
+      }
+      {
+        ClockView c;
+        fillClock(c);
+        if (force || screen != SCR_CLOCK) {
+          drawClock(c, current.valid() ? "SIGNAL EXPIRED" : "WAITING FOR SIGNAL");
+          screen = SCR_CLOCK;
+          applyBrightness();
+        } else {
+          updateClock(c);   // partial redraw, once a second, no flicker
+        }
+      }
+      break;
+  }
+}
+
+void refreshScreen(bool force = false) {
+  buildSlots();
+  drawCurrentSlot(force);
+}
+
+/* Move to the next slot. Called by the rotation timer. */
+void advanceSlot() {
+  buildSlots();
+  if (slotCount < 2) {
+    drawCurrentSlot(false);   // only one screen available; let the clock tick
+    return;
+  }
+  slotPos = (uint8_t)((slotPos + 1) % slotCount);
+  drawCurrentSlot(true);
+}
+
+/* Bring the signal to the front and hold it there. A new entry is the thing the
+   user actually cares about - it should not wait its turn behind a price. */
+void pinSignal() {
+  buildSlots();
+  for (uint8_t i = 0; i < slotCount; i++) {
+    if (slots[i].kind == SLOT_SIGNAL) {
+      slotPos = i;
+      break;
+    }
+  }
+  pinUntil = cfg.pinSec ? (millis() + (uint32_t)cfg.pinSec * 1000UL) : 0;
+  lastRotate = millis();
+  drawCurrentSlot(true);
 }
 
 /* ================================================================== */
 /* polling the bridge                                                  */
 /* ================================================================== */
 
-void pollBridge() {
-  if (apMode || WiFi.status() != WL_CONNECTED) return;
+/**
+ * One authenticated GET against the bridge.
+ *
+ * Shared by the signal poll, the crypto fetch and the clock fallback so that
+ * the TLS setup - and the heap guard in front of it - exists in exactly one
+ * place. `path` is everything after the base URL, key included.
+ *
+ * Returns the HTTP status, or a negative number if the request was never
+ * attempted. Only ONE of these should run per pass through loop(): each holds a
+ * 16 kB buffer for its lifetime, and two at once is what a reboot looks like.
+ */
+int bridgeGet(const String &path, String &payload) {
+  if (apMode || WiFi.status() != WL_CONNECTED) return -1;
   // Report which half is missing. Returning silently here made an unsaved
   // bridge URL and an unsaved device key look identical on the Status tab.
   if (!cfg.bridge[0]) {
     lastError = F("no bridge URL saved");
-    return;
+    return -1;
   }
   if (!cfg.devKey[0]) {
     lastError = F("no device key saved");
-    return;
+    return -1;
   }
 
   // A TLS session needs roughly 22 kB (16 kB receive buffer plus BearSSL's own
@@ -257,25 +375,20 @@ void pollBridge() {
     uint32_t need = mflnOk ? 9000 : 24000;
     if (ESP.getFreeHeap() < need) {
       lastError = F("low memory, skipped");
-      return;
+      return -2;
     }
   }
 
   String url(cfg.bridge);
-  url += "/latest?key=";
-  url += urlEncode(cfg.devKey);
-  url += "&device=";
-  url += urlEncode(cfg.devId);
-  url += "&since=";
-  url += u64str(current.ts);
+  url += path;
 
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(9000);
-  http.setUserAgent(F("DrFX-GodMode/" FW_VERSION));
+  http.setUserAgent(F("DrFX-UltraOS/" FW_VERSION));
 
   int code = -1;
-  String payload;
+  payload = "";
 
   if (bridgeIsHttps()) {
     // Allocated per request and freed immediately: the TLS receive buffer is
@@ -297,6 +410,20 @@ void pollBridge() {
       http.end();
     }
   }
+  return code;
+}
+
+void pollBridge() {
+  String path("/latest?key=");
+  path += urlEncode(cfg.devKey);
+  path += "&device=";
+  path += urlEncode(cfg.devId);
+  path += "&since=";
+  path += u64str(current.ts);
+
+  String payload;
+  int code = bridgeGet(path, payload);
+  if (code < 0) return;
 
   lastHttpCode = code;
 
@@ -306,7 +433,7 @@ void pollBridge() {
     Signal s;
     if (signalFromJson(payload, s)) {
       current = s;
-      refreshScreen(true);
+      pinSignal();   // interrupt the carousel: a fresh entry is the point
     }
   } else if (code == HTTP_CODE_NO_CONTENT) {
     pollFails = 0;   // 204 = nothing new, which is the normal quiet answer
@@ -315,6 +442,78 @@ void pollBridge() {
     pollFails++;
     lastError = (code > 0) ? String("HTTP ") + code : String("connect failed");
   }
+}
+
+/**
+ * Market prices, by way of the bridge.
+ *
+ * The Worker talks to Binance and hands back a few hundred bytes with the
+ * sparkline already scaled - see bridge/worker.js. Doing it here directly would
+ * mean a second TLS host and a second 16 kB buffer on a chip that has about
+ * 39 kB to play with.
+ */
+void pollCrypto() {
+  if (!cfg.showCrypto || !cfg.symbols[0]) return;
+
+  String path("/crypto?key=");
+  path += urlEncode(cfg.devKey);
+  path += "&symbols=";
+  path += urlEncode(cfg.symbols);
+
+  String payload;
+  int code = bridgeGet(path, payload);
+  if (code < 0) return;
+
+  if (code == HTTP_CODE_OK && cryptoFromJson(payload, crypto)) {
+    cryptoFails = 0;
+    // A first success adds slots to the rotation, so rebuild - but do not force
+    // a redraw, or prices would yank the screen away from whatever you are
+    // reading every thirty seconds.
+    buildSlots();
+    if (screen == SCR_CRYPTO) drawCurrentSlot(true);   // refresh in place
+  } else {
+    cryptoFails++;
+    if (crypto.error.length() == 0) {
+      crypto.error = (code > 0) ? String("HTTP ") + code : String("connect failed");
+    }
+  }
+}
+
+/**
+ * Clock of last resort.
+ *
+ * NTP is UDP port 123, which plenty of routers and captive networks quietly
+ * drop - and when they do, the device has no way to know the time at all. The
+ * bridge is already trusted, already reachable over TLS, and /stats reports the
+ * Worker's own clock, so it makes a serviceable fallback. Accuracy is whatever
+ * the round trip costs, which is a second or two: irrelevant for a wall clock
+ * and for deciding whether a signal has gone stale.
+ *
+ * NTP still wins if it ever answers - this only fills the gap.
+ */
+void tryBridgeTime() {
+  String path("/stats?key=");
+  path += urlEncode(cfg.devKey);
+  path += "&device=";
+  path += urlEncode(cfg.devId);
+
+  String payload;
+  if (bridgeGet(path, payload) != HTTP_CODE_OK) return;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, payload)) return;
+
+  uint64_t ms = doc["now"] | (uint64_t)0;
+  if (ms < 1700000000000ULL) return;    // clearly not a real epoch
+
+  struct timeval tv;
+  tv.tv_sec = (time_t)(ms / 1000ULL);
+  tv.tv_usec = (suseconds_t)((ms % 1000ULL) * 1000ULL);
+  settimeofday(&tv, nullptr);
+
+  timeReady = true;
+  timeSource = "bridge";
+  refreshScreen(true);
 }
 
 /* ================================================================== */
@@ -361,6 +560,11 @@ void handleGetConfig() {
   doc["nightStart"] = cfg.nightStart;
   doc["nightEnd"] = cfg.nightEnd;
   doc["showClock"] = cfg.showClock;
+  doc["rotateSec"] = cfg.rotateSec;
+  doc["pinSec"] = cfg.pinSec;
+  doc["showCrypto"] = cfg.showCrypto;
+  doc["cryptoSec"] = cfg.cryptoSec;
+  doc["symbols"] = cfg.symbols;
   doc["tz"] = cfg.tz;
   doc["tzName"] = cfg.tzName;
   doc["cAccent"] = cfg.cAccent;
@@ -421,6 +625,29 @@ void handleSetConfig() {
   if (doc["nightStart"].is<unsigned int>()) cfg.nightStart = doc["nightStart"].as<uint8_t>() % 24;
   if (doc["nightEnd"].is<unsigned int>()) cfg.nightEnd = doc["nightEnd"].as<uint8_t>() % 24;
   if (doc["showClock"].is<bool>()) cfg.showClock = doc["showClock"].as<bool>();
+  if (doc["rotateSec"].is<unsigned int>()) {
+    uint16_t r = doc["rotateSec"].as<uint16_t>();
+    cfg.rotateSec = (r && r < 4) ? 4 : r;   // 0 stops the carousel
+  }
+  if (doc["pinSec"].is<unsigned int>()) cfg.pinSec = doc["pinSec"].as<uint16_t>();
+  if (doc["cryptoSec"].is<unsigned int>()) {
+    uint16_t c = doc["cryptoSec"].as<uint16_t>();
+    cfg.cryptoSec = (c < 10) ? 10 : c;      // the Worker caches for 20 anyway
+  }
+
+  // A change to the watchlist should show up now, not at the next tick, so the
+  // fetch timer is reset and loop() picks it up on its next pass.
+  bool cryptoChanged = putStr("symbols", cfg.symbols, sizeof(cfg.symbols), false);
+  if (doc["showCrypto"].is<bool>()) {
+    bool want = doc["showCrypto"].as<bool>();
+    cryptoChanged |= (want != cfg.showCrypto);
+    cfg.showCrypto = want;
+  }
+  if (cryptoChanged) {
+    lastCrypto = 0;
+    crypto.ok = false;
+    crypto.error = "";
+  }
 
   // A zone change takes effect immediately - no reboot. setenv/tzset is what
   // configTime() does internally, so re-running it is enough; the NTP servers
@@ -480,6 +707,41 @@ void handleStatus() {
     t["date"] = c.date;
     t["weekday"] = c.weekday;
     t["night"] = isNight();
+    // "ntp", "bridge" or "none" - the difference matters when a network blocks
+    // UDP 123 and the clock is quietly coming from the Worker instead.
+    t["src"] = timeSource;
+  }
+
+  // What the carousel is doing, so the settings page can show it live.
+  {
+    JsonObject r = doc["rotation"].to<JsonObject>();
+    r["every"] = cfg.rotateSec;
+    r["slots"] = slotCount;
+    r["pos"] = slotPos;
+    r["pinned"] = pinActive();
+    const char *kind = "clock";
+    if (slotCount && slots[slotPos].kind == SLOT_SIGNAL) kind = "signal";
+    else if (slotCount && slots[slotPos].kind == SLOT_CRYPTO) kind = "crypto";
+    r["showing"] = kind;
+  }
+
+  {
+    JsonObject cr = doc["crypto"].to<JsonObject>();
+    cr["on"] = cfg.showCrypto;
+    cr["symbols"] = cfg.symbols;
+    cr["ok"] = crypto.ok;
+    cr["ageSec"] = crypto.ageSec();
+    cr["fails"] = cryptoFails;
+    cr["error"] = crypto.error;
+    JsonArray arr = cr["tickers"].to<JsonArray>();
+    for (uint8_t i = 0; i < crypto.n; i++) {
+      JsonObject o = arr.add<JsonObject>();
+      o["sym"] = crypto.t[i].sym;
+      o["name"] = crypto.t[i].name;
+      o["price"] = crypto.t[i].price;
+      o["change"] = crypto.t[i].change;
+      o["spark"] = crypto.t[i].sparkN;
+    }
   }
 
   doc["httpCode"] = lastHttpCode;
@@ -515,8 +777,22 @@ void handlePush() {
   }
   if (s.ts == 0) s.ts = current.ts + 1;
   current = s;
-  refreshScreen(true);
+  pinSignal();
   server.send(200, F("application/json"), F("{\"ok\":true}"));
+}
+
+/* Step the carousel by hand - handy from the settings page or the CLI when you
+   are checking a layout and do not want to wait for the timer. */
+void handleNext() {
+  if (!requireAuth()) return;
+  pinUntil = 0;          // a manual step cancels any signal pin
+  lastRotate = millis();
+  advanceSlot();
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["pos"] = slotPos;
+  doc["slots"] = slotCount;
+  sendJson(doc);
 }
 
 /* Draw a fake card so the user can see the layout before any alert fires. */
@@ -535,7 +811,7 @@ void handleTest() {
   s.tf = "15M";
   s.rxMillis = millis();
   current = s;
-  refreshScreen(true);
+  pinSignal();
   server.send(200, F("application/json"), F("{\"ok\":true}"));
 }
 
@@ -583,6 +859,7 @@ void setupServer() {
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/push", HTTP_POST, handlePush);
   server.on("/api/test", HTTP_POST, handleTest);
+  server.on("/api/next", HTTP_POST, handleNext);
   server.on("/api/scan", HTTP_GET, handleScan);
   server.on("/api/reboot", HTTP_POST, handleReboot);
   server.on("/api/factory", HTTP_POST, handleFactory);
@@ -685,7 +962,13 @@ void setup() {
   delay(2500);
 
   refreshScreen(true);
-  lastPoll = millis() - (uint32_t)cfg.pollSec * 1000UL;   // poll immediately
+
+  // Both timers start already expired so the first pass through loop() fetches
+  // a signal and the pass after that fetches prices - one TLS session each,
+  // never overlapping.
+  lastPoll = millis() - (uint32_t)cfg.pollSec * 1000UL;
+  lastCrypto = millis() - (uint32_t)cfg.cryptoSec * 1000UL;
+  lastRotate = millis();
 }
 
 void loop() {
@@ -702,8 +985,15 @@ void loop() {
 
   if (!timeReady && time(nullptr) > 1700000000) {
     timeReady = true;
+    timeSource = "ntp";
     refreshScreen(true);
   }
+
+  /* --- network: at most one TLS session per pass -------------------- */
+  // Each request holds a 16 kB receive buffer for its lifetime. Two overlapping
+  // is what a reboot looks like, so the three jobs below take turns rather than
+  // firing whenever their timer happens to be due.
+  bool didNetwork = false;
 
   // Back off politely if the bridge is unhappy, instead of hammering it.
   uint32_t interval = (uint32_t)cfg.pollSec * 1000UL;
@@ -715,15 +1005,45 @@ void loop() {
   if (now - lastPoll >= interval) {
     lastPoll = now;
     pollBridge();
+    didNetwork = true;
   }
 
-  // The clock screen now shows seconds, so it ticks once a second rather than
-  // every 15. updateClock() redraws two text fields and a 2px bar, which is a
-  // few hundred microseconds of SPI - cheap enough to sit in the main loop.
+  if (!didNetwork && cfg.showCrypto) {
+    uint32_t cInterval = (uint32_t)cfg.cryptoSec * 1000UL;
+    if (cryptoFails > 3) cInterval *= 4UL;          // same courtesy as above
+    if (cInterval > 300000UL) cInterval = 300000UL;
+    if (now - lastCrypto >= cInterval) {
+      lastCrypto = now;
+      pollCrypto();
+      didNetwork = true;
+    }
+  }
+
+  // Only while the clock is unset, and never more than once a minute. Give NTP
+  // a minute and a half of quiet first - it usually answers within seconds, and
+  // asking the bridge before then would mask a network that is actually fine.
+  if (!didNetwork && !timeReady && now > 90000UL && now - lastTimeTry >= 60000UL) {
+    lastTimeTry = now;
+    tryBridgeTime();
+  }
+
+  /* --- the carousel -------------------------------------------------- */
+  if (cfg.rotateSec && !pinActive() &&
+      now - lastRotate >= (uint32_t)cfg.rotateSec * 1000UL) {
+    lastRotate = now;
+    advanceSlot();
+  }
+
+  // The clock screen shows seconds, so it ticks every second. updateClock()
+  // redraws two text fields and a 2px bar - a few hundred microseconds of SPI.
+  // This is also where a signal ageing out of freshness gets noticed: the slot
+  // list shrinks, and the screen follows.
   if (now - lastClock >= 1000) {
     lastClock = now;
-    if (screen == SCR_CLOCK) refreshScreen(false);
-    else if (!signalIsFresh()) refreshScreen(true);
+    uint8_t before = slotCount;
+    buildSlots();
+    if (slotCount != before) drawCurrentSlot(true);
+    else if (slotCount && slots[slotPos].kind == SLOT_CLOCK) drawCurrentSlot(false);
   }
 
   if (now - lastNightCheck >= 60000) {

@@ -14,6 +14,7 @@
  *   GET  /latest?key=DEVICE_KEY&device=main&since=<ts>  device polls here
  *   GET  /history?key=DEVICE_KEY&device=main            recent signals, JSON
  *   GET  /stats?key=DEVICE_KEY&device=main              counts and clock check
+ *   GET  /crypto?key=DEVICE_KEY&symbols=BTCUSDT,...     Binance prices, trimmed
  *   GET  /health                                        plain "ok"
  *   GET  /                                              human status page
  *
@@ -23,10 +24,21 @@
  * KV namespace binding: SIGNALS
  */
 
-const BRIDGE_VERSION = "2.0.0";
+const BRIDGE_VERSION = "2.1.0";
 const MAX_BODY = 8 * 1024;      // reject silly-sized alert bodies
 const HISTORY = 24;             // how many past signals to keep
 const TTL = 60 * 60 * 24 * 7;   // KV entries expire after a week
+
+/* ---- crypto proxy ------------------------------------------------ */
+// data-api.binance.vision is Binance's public market-data host: same data as
+// api.binance.com, no key, and intended for exactly this. api.binance.com
+// geo-blocks some regions, which would fail depending on which edge the Worker
+// happened to run in - a maddening intermittent bug to diagnose from a 240x240
+// screen.
+const BINANCE = "https://data-api.binance.vision";
+const CRYPTO_TTL = 20;          // seconds; the device asks every 30
+const MAX_SYMBOLS = 4;          // keeps subrequests and device memory bounded
+const SPARK_POINTS = 24;        // one hourly close per point
 
 export default {
   async fetch(request, env) {
@@ -46,6 +58,7 @@ export default {
       if (path === "/latest") return handleLatest(request, url, env);
       if (path === "/history") return handleHistory(url, env);
       if (path === "/stats") return handleStats(url, env);
+      if (path === "/crypto") return handleCrypto(url, env);
       if (path === "/") return handleStatus(url, env);
       return text("not found", 404);
     } catch (err) {
@@ -179,6 +192,139 @@ async function handleStats(url, env) {
     lastTs: latest ? latest.ts : null,
     lastAgeSec: latest ? Math.round((Date.now() - latest.ts) / 1000) : null,
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Binance proxy                                                       */
+/*                                                                     */
+/* The device could call Binance itself, but it does not negotiate      */
+/* small TLS fragments, so every direct HTTPS call would need a 16 kB   */
+/* receive buffer out of roughly 39 kB of free heap - alongside the     */
+/* bridge poll already doing the same thing. Proxying here means one    */
+/* TLS host, a payload measured in hundreds of bytes, and the sparkline */
+/* arithmetic done on hardware that has floating point.                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Decimal places that suit the magnitude.
+ *
+ * The device draws the integer part in a 48px font that has digits, '.', '-'
+ * and '+' but NO COMMA glyph, so no thousands separators are sent. Two decimals
+ * on a five-figure price is already more precision than a glanceable screen
+ * needs; sub-dollar coins get more so they are not all just "0.00".
+ */
+function priceDecimals(v) {
+  if (v >= 1000) return 2;
+  if (v >= 1) return 3;
+  if (v >= 0.01) return 5;
+  return 8;
+}
+
+function formatPrice(raw) {
+  const n = Number(raw);
+  if (!isFinite(n)) return "0";
+  return n.toFixed(priceDecimals(Math.abs(n)));
+}
+
+/** Strip the quote asset so the screen shows "BTC" rather than "BTCUSDT". */
+function shortName(symbol) {
+  for (const quote of ["USDT", "FDUSD", "BUSD", "USDC", "TUSD", "BTC", "ETH", "EUR", "GBP"]) {
+    if (symbol.length > quote.length && symbol.endsWith(quote)) {
+      return symbol.slice(0, -quote.length);
+    }
+  }
+  return symbol;
+}
+
+/**
+ * Closing prices -> 24 integers from 0 to 100.
+ *
+ * Sending scaled points rather than prices keeps the payload tiny and means the
+ * firmware plots them with two multiplications and no floating point at all. A
+ * flat series would divide by zero, so it is pinned to the middle of the range.
+ */
+function scaleSpark(closes) {
+  const vals = closes.map(Number).filter((n) => isFinite(n));
+  if (vals.length < 2) return [];
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const span = hi - lo;
+  if (span <= 0) return vals.map(() => 50);
+  return vals.map((v) => Math.round(((v - lo) / span) * 100));
+}
+
+async function binance(path) {
+  // cacheEverything makes Cloudflare hold the upstream answer at the edge, so a
+  // second device - or a browser hitting the same URL - costs Binance nothing.
+  const r = await fetch(BINANCE + path, {
+    cf: { cacheTtl: CRYPTO_TTL, cacheEverything: true },
+    headers: { accept: "application/json" },
+  });
+  if (!r.ok) throw new Error(`binance ${r.status} on ${path.split("?")[0]}`);
+  return r.json();
+}
+
+async function handleCrypto(url, env) {
+  if (!authDevice(url, env)) return text("bad key", 403);
+
+  const symbols = (url.searchParams.get("symbols") || "BTCUSDT")
+    .split(",")
+    .map((s) => s.trim().toUpperCase().replace(/[^A-Z0-9]/g, ""))
+    .filter(Boolean)
+    .slice(0, MAX_SYMBOLS);
+
+  if (!symbols.length) return text("no usable symbols", 400);
+
+  let tickers;
+  try {
+    tickers = await binance(
+      `/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`
+    );
+  } catch (err) {
+    // 502 rather than 500: the failure is upstream, and the device backs off on
+    // any non-200 rather than hammering a service that is already unhappy.
+    return json({ error: String(err.message || err) }, 502);
+  }
+
+  const bySymbol = new Map();
+  for (const t of Array.isArray(tickers) ? tickers : [tickers]) {
+    if (t && t.symbol) bySymbol.set(t.symbol, t);
+  }
+
+  // Sparklines are a nice-to-have. One kline request failing must not cost the
+  // user their prices, so each is settled independently and an empty series
+  // simply means the device draws no chart.
+  const sparks = await Promise.all(
+    symbols.map(async (s) => {
+      try {
+        const k = await binance(
+          `/api/v3/klines?symbol=${encodeURIComponent(s)}&interval=1h&limit=${SPARK_POINTS}`
+        );
+        return scaleSpark((k || []).map((row) => row[4]));
+      } catch (_) {
+        return [];
+      }
+    })
+  );
+
+  const out = [];
+  symbols.forEach((s, i) => {
+    const t = bySymbol.get(s);
+    if (!t) return;                      // unknown pair - skip, do not invent
+    out.push({
+      s,
+      d: shortName(s),
+      p: formatPrice(t.lastPrice),
+      c: Number(Number(t.priceChangePercent).toFixed(2)),
+      h: formatPrice(t.highPrice),
+      l: formatPrice(t.lowPrice),
+      k: sparks[i],
+    });
+  });
+
+  if (!out.length) return json({ error: "no matching symbols on Binance" }, 404);
+
+  return json({ v: BRIDGE_VERSION, ts: Date.now(), tickers: out });
 }
 
 /* ------------------------------------------------------------------ */
