@@ -63,6 +63,7 @@ uint32_t lastTimeTry = 0;
 uint32_t pollFails = 0;
 uint32_t cryptoFails = 0;
 int lastHttpCode = 0;
+int lastCryptoCode = 0;   // status of the most recent /crypto attempt
 String lastError;
 const char *timeSource = "none";   // none / ntp / bridge
 
@@ -399,14 +400,22 @@ int bridgeGet(const String &path, String &payload) {
     sc->setBufferSizes(mflnOk ? 1024 : 16384, 512);
     if (http.begin(*sc, url)) {
       code = http.GET();
-      if (code == HTTP_CODE_OK) payload = http.getString();
+      // Read the body on failure too, bounded. The bridge puts its reason in
+      // there, and without it every upstream problem looks like a bare status
+      // code - which is exactly how a Binance outage and a Cloudflare CPU limit
+      // became indistinguishable from the device.
+      if (code == HTTP_CODE_OK || (code >= 400 && http.getSize() < 512)) {
+        payload = http.getString();
+      }
       http.end();
     }
   } else {
     WiFiClient c;
     if (http.begin(c, url)) {
       code = http.GET();
-      if (code == HTTP_CODE_OK) payload = http.getString();
+      if (code == HTTP_CODE_OK || (code >= 400 && http.getSize() < 512)) {
+        payload = http.getString();
+      }
       http.end();
     }
   }
@@ -464,6 +473,8 @@ void pollCrypto() {
   int code = bridgeGet(path, payload);
   if (code < 0) return;
 
+  lastCryptoCode = code;
+
   if (code == HTTP_CODE_OK && cryptoFromJson(payload, crypto)) {
     cryptoFails = 0;
     // A first success adds slots to the rotation, so rebuild - but do not force
@@ -473,8 +484,25 @@ void pollCrypto() {
     if (screen == SCR_CRYPTO) drawCurrentSlot(true);   // refresh in place
   } else {
     cryptoFails++;
-    if (crypto.error.length() == 0) {
-      crypto.error = (code > 0) ? String("HTTP ") + code : String("connect failed");
+    // Always overwrite. This used to be guarded with `if (error.length() == 0)`,
+    // which meant the very first failure after boot pinned the message forever -
+    // so a stale "HTTP 502" was still on display long after the cause had
+    // changed, and every attempt after the first was effectively unreported.
+    // That guard cost hours of black-box debugging; the message must describe
+    // the LAST attempt, not the first.
+    if (code > 0) {
+      crypto.error = String("HTTP ") + code;
+      // The bridge explains itself in the body - "no source had BTCUSDT" is a
+      // world away from Cloudflare's own 502, and they are indistinguishable
+      // from the status line alone.
+      if (payload.length()) {
+        crypto.error += " ";
+        crypto.error += payload.substring(0, 120);
+      }
+    } else if (code == -2) {
+      crypto.error = F("skipped, low memory");
+    } else {
+      crypto.error = lastError.length() ? lastError : String(F("connect failed"));
     }
   }
 }
@@ -732,7 +760,9 @@ void handleStatus() {
     cr["ok"] = crypto.ok;
     cr["ageSec"] = crypto.ageSec();
     cr["fails"] = cryptoFails;
+    cr["code"] = lastCryptoCode;   // status of the LAST attempt, not the first
     cr["error"] = crypto.error;
+    cr["heap"] = ESP.getFreeHeap();
     JsonArray arr = cr["tickers"].to<JsonArray>();
     for (uint8_t i = 0; i < crypto.n; i++) {
       JsonObject o = arr.add<JsonObject>();

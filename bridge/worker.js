@@ -41,7 +41,12 @@ const TTL = 60 * 60 * 24 * 7;   // KV entries expire after a week
 // and Coinbase backs it up: a public API with no key, no datacenter blocking,
 // and both a 24h summary and hourly candles. Whichever wins is named in the
 // reply, so a screen showing the wrong price can be traced to its source.
-const CRYPTO_TTL = 20;          // seconds; the device asks every 30
+// 90s, not 20. The device polls every 30s and backs off to 120s after a few
+// failures, so a 20s TTL guaranteed it never once hit a warm cache - every
+// single fetch paid for a cold upstream round trip. Prices on a glanceable
+// screen do not need 20-second freshness, and the cheaper path is the one that
+// stays inside a Worker's CPU budget.
+const CRYPTO_TTL = 90;
 const MAX_SYMBOLS = 4;          // keeps subrequests and device memory bounded
 const SPARK_POINTS = 24;        // one hourly close per point
 
@@ -365,8 +370,20 @@ async function fromCoinbase(symbols) {
       let spark = [];
       try {
         // Candles come back newest-first as [time, low, high, open, close, vol].
+        //
+        // The window is pinned to the last SPARK_POINTS hours. Without start and
+        // end Coinbase returns its maximum of 300+ rows, and we then parse and
+        // throw away 92% of them - on a Worker with a 10 ms CPU budget that is
+        // most of the budget spent on data nobody sees. Rounding the bounds to
+        // the hour also means every device asking within the same hour produces
+        // an identical URL, so the edge cache actually gets hit.
+        const hour = 3600 * 1000;
+        const end = Math.floor(Date.now() / hour) * hour;
+        const start = end - SPARK_POINTS * hour;
         const c = await upstream(
-          `${COINBASE}/products/${encodeURIComponent(product)}/candles?granularity=3600`
+          `${COINBASE}/products/${encodeURIComponent(product)}/candles` +
+            `?granularity=3600&start=${new Date(start).toISOString()}` +
+            `&end=${new Date(end).toISOString()}`
         );
         spark = scaleSpark((c || []).slice(0, SPARK_POINTS).reverse().map((row) => row[4]));
       } catch (_) {
