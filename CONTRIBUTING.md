@@ -29,9 +29,12 @@ Read [docs/DESIGN.md](docs/DESIGN.md) first. Then:
 4. Mirror the layout in `ui/screens-preview.html` so it can be reviewed without
    hardware.
 
-Flash is the binding constraint. The stock Ultra's OTA slot is about 440 kB, and
-the build summary tells you whether each image still fits. If a change pushes the
-slim image over, it needs to be optional or it needs to buy its way in.
+Flash is the binding constraint, and both images are **already over** the ~440 kB
+the stock updater leaves for an over-the-air install — which is why the first
+flash goes over UART. That does not make the budget irrelevant: it makes growth
+worth watching, since every kilobyte moves the slim image further out of reach of
+ever fitting again. The build summary prints both sizes on every run. A change
+that adds meaningfully to either should say in its description what it bought.
 
 ## Changing the timezone list
 
@@ -76,3 +79,20 @@ npx wrangler dev            # then: curl 'http://localhost:8787/health'
 Never commit keys. `SECRETS.local.md`, `*.local.env` and `.dev.vars` are already
 ignored — keep it that way. Worker secrets belong in `wrangler secret put`, not
 in `wrangler.toml`.
+
+Found a vulnerability rather than a bug? [SECURITY.md](SECURITY.md) has the
+reporting process and the list of known trade-offs that are not vulnerabilities.
+
+## Where things go
+
+| If you are adding… | It goes in |
+|---|---|
+| code that runs on the device | `firmware/src/` |
+| code that runs on Cloudflare | `bridge/` |
+| a script that runs on your machine | `tools/`, standard library only |
+| data more than one component needs | `shared/` |
+| a guide | `docs/` |
+| a third-party file, unmodified | `vendor/`, with provenance in its README |
+
+`archive/` is for superseded artifacts only. Nothing there is built, tested or
+referenced by the current code — do not add to it as a way of keeping a draft.

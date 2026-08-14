@@ -77,16 +77,20 @@ jobs:
             printf "| SLIM | %s bytes (%s kB) | %s |\n" "$SLIM" "$((SLIM/1024))" \
               "$([ "$SLIM" -le 450560 ] && echo 'likely' || echo 'NO - still too big')"
             echo ""
-            echo "The stock GeekMagic Ultra firmware reserves most of its flash for the"
-            echo "photo album, so the slot left for an over-the-air update is small."
-            echo "Flash the SLIM image through the stock updater first. Once the device"
-            echo "is running our layout there is ~3 MB of program area, so you can then"
-            echo "update to the full image from Admin -> Firmware update."
+            echo "The 440 kB figure is the slot the stock GeekMagic Ultra firmware leaves"
+            echo "for an over-the-air update - it reserves most of the chip for its photo"
+            echo "album. It is a conservative estimate and varies between units, so a"
+            echo "'NO' here means 'the stock updater will probably refuse this', not"
+            echo "'this image is broken'."
+            echo ""
+            echo "If neither image fits, flash once over UART - see docs/SETUP.md Part 3.2."
+            echo "After that the device runs our layout with ~3 MB of program area, and"
+            echo "every later update is a browser upload via Admin -> Firmware update."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "full = $FULL bytes, slim = $SLIM bytes"
           if [ "$SLIM" -gt 450560 ]; then
-            echo "::warning::Even the slim image is over 440 kB - UART flashing may be needed."
+            echo "::warning::Slim image is $((SLIM/1024)) kB, over the ~440 kB OTA slot - first flash will need UART (docs/SETUP.md Part 3.2)."
           fi
 
       - uses: actions/upload-artifact@v4

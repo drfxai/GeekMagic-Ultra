@@ -119,10 +119,20 @@ You do **not** need to install a compiler.
 1. Push this repository to GitHub (GitHub Desktop → **Commit to main** → **Push origin**).
    Keep the folder structure — the `.github` folder at the root is what triggers the build.
 2. Open the repository's **Actions** tab, wait for the green tick (about two minutes).
-3. Open the finished run and download the **firmware** artifact. Unzip it. You now have
-   `drfx-godmode-smalltv-ultra.bin`.
+3. Open the finished run and download the **firmware** artifact. Unzip it. You get two
+   files:
 
-The build log also prints the file size and warns you if it looks too big for step 3.5.
+   | File | What it is |
+   |---|---|
+   | `drfx-godmode-smalltv-ultra.bin` | **full** — mDNS (`godmode.local`), smooth fonts, the 48 px numerals and the seven-segment clock |
+   | `drfx-godmode-smalltv-ultra-SLIM.bin` | **slim** — the same firmware with those pieces stripped out to make the image smaller |
+
+**Read the size table in the run summary before going on.** It prints both sizes and
+whether each is likely to fit the stock updater's slot. At the time of writing neither
+does — full is around 587 kB and slim around 512 kB, against a slot of roughly 440 kB —
+so plan on Part 3 needing a serial cable once. That is a one-off: after the first flash
+the device runs our layout, with about 3 MB of program area, and everything after that is
+a browser upload.
 
 > Building locally instead? Install [PlatformIO](https://platformio.org), then
 > `cd firmware && pio run`. The file lands in `.pio/build/smalltv_ultra/firmware.bin`.
@@ -132,39 +142,54 @@ The build log also prints the file size and warns you if it looks too big for st
 ## Part 3 — Flash the device (≈5 minutes)
 
 **Back up first.** This replaces the stock firmware completely and erases the photos
-stored on the device. Keep your `FW-Smalltv-Ultra-V9.0.50.bin` file — it's in
-`stock-firmware/` in this repository, and it's your way back.
+stored on the device. Your way back is
+`vendor/stock-firmware/FW-Smalltv-Ultra-V9.0.50/FW-Smalltv-Ultra-V9.0.50.bin`, kept in
+this repository — see [vendor/README.md](../vendor/README.md).
 
-1. Find the SmallTV's IP address (it's shown on screen, or look in your router's
-   device list).
+The stock *Ultra* firmware reserves most of the chip's flash for its photo album, so the
+slot it leaves for an over-the-air update is roughly 440 kB. Our images are currently
+bigger than that, so **the first install almost always needs a serial cable**. It is
+genuinely once — after this the device runs our flash layout and updates are a browser
+upload.
+
+### 3.1 Try the stock updater first (two minutes, might just work)
+
+Worth a try if the size table in Part 2 says `SLIM` fits, or if you simply want to find
+out — the failure is harmless.
+
+1. Find the SmallTV's IP address (shown on screen, or in your router's device list).
 2. In a browser go to `http://<that-ip>` and find the firmware update section of the
    stock web console.
-3. Upload `drfx-godmode-smalltv-ultra.bin`. The device reboots.
+3. Upload `drfx-godmode-smalltv-ultra-SLIM.bin`.
 
-### If it says "Not Enough Space"
+If it reboots into **SETUP MODE**, skip to Part 4. If it says *"Not Enough Space"* — the
+usual outcome — carry on below. Nothing has been damaged.
 
-This is a known quirk of the *Ultra* stock firmware: it reserves most of the chip's
-flash for the photo album, so the space it leaves for an update is small. The build
-log from Part 2 tells you the file size — under about 500 kB usually goes through.
+### 3.2 Flash over UART (the reliable path)
 
-If it doesn't, you'll need a cable once:
+Open the case: two screws underneath, then slide the back off. Wire a **3.3 V**
+USB‑to‑serial adapter to the pads — **3V3, GND, TX→RX, RX→TX** — and hold **GPIO0 to GND
+while powering on** to enter flash mode. Pin photos are on the
+[ESPHome page for this board](https://devices.esphome.io/devices/geekmagic-ultra/).
 
-- **Flash over UART.** Open the case (two screws underneath, then slide the back off).
-  Wire a 3.3 V USB‑to‑serial adapter to the pads: **3V3, GND, TX→RX, RX→TX**, and hold
-  **GPIO0 to GND while powering on** to enter flash mode. Then:
+```bash
+pip install esptool
 
-  ```
-  pip install esptool
-  # back up the stock image first
-  esptool --port COM3 read_flash 0x0 0x400000 stock-backup.bin
-  # write the new one
-  esptool --port COM3 --baud 460800 write_flash 0x0 drfx-godmode-smalltv-ultra.bin
-  ```
+# 1. back up the whole chip first - this is your undo, and it takes a minute
+esptool --port COM3 read_flash 0x0 0x400000 stock-backup.bin
 
-  Pin photos are on the [ESPHome page for this board](https://devices.esphome.io/devices/geekmagic-ultra/).
+# 2. write the full image (you have a cable attached, so there is no reason
+#    to settle for the slim one)
+esptool --port COM3 --baud 460800 write_flash 0x0 drfx-godmode-smalltv-ultra.bin
+```
 
-After the first flash you never need the cable again — all later updates go through the
-**Admin → Firmware update** button in the new web UI.
+> **3.3 V only.** The ESP8266 is not 5 V tolerant. An adapter with a voltage jumper is
+> worth the couple of pounds.
+
+Power-cycle normally afterwards, without GPIO0 grounded.
+
+**You never need the cable again.** Later updates go through **Admin → Firmware update**
+in the new web UI, and from there the full image fits comfortably.
 
 ---
 
@@ -247,8 +272,10 @@ connection. Set *Check every* to 10 seconds or more in the Bridge tab.
 **Can't find `godmode.local`** — some Windows setups don't do `.local` names. Use the IP
 address shown on screen at boot, or find it in your router's device list.
 
-**Want the stock firmware back** — flash `stock-firmware/FW-Smalltv-Ultra-V9.0.50/FW-Smalltv-Ultra-V9.0.50.bin` through
-**Admin → Firmware update**, or over UART the same way as Part 3.
+**Want the stock firmware back** — flash
+`vendor/stock-firmware/FW-Smalltv-Ultra-V9.0.50/FW-Smalltv-Ultra-V9.0.50.bin` through
+**Admin → Firmware update**, or over UART the same way as Part 3.2. Check its md5 first;
+the expected value is in [vendor/README.md](../vendor/README.md).
 
 ---
 
