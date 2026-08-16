@@ -54,6 +54,25 @@ const BINANCE = "https://data-api.binance.vision";
 const COINBASE = "https://api.exchange.coinbase.com";
 const COINGECKO = "https://api.coingecko.com/api/v3";
 const KRAKEN = "https://api.kraken.com/0/public";
+const PAPRIKA = "https://api.coinpaprika.com/v1";
+const BYBIT = "https://api.bybit.com";
+const OKX = "https://www.okx.com";
+
+// Coinpaprika keys by coin id like CoinGecko, but with a "sym-name" shape.
+// It is a pure aggregator - it holds no customer funds and operates no venue -
+// so it has no sanctions surface and no regional gate, which is the entire
+// reason it leads the chain.
+const PAPRIKA_IDS = {
+  BTC: "btc-bitcoin", ETH: "eth-ethereum", SOL: "sol-solana", XRP: "xrp-xrp",
+  BNB: "bnb-binance-coin", ADA: "ada-cardano", DOGE: "doge-dogecoin", TRX: "trx-tron",
+  AVAX: "avax-avalanche", LINK: "link-chainlink", DOT: "dot-polkadot",
+  MATIC: "matic-polygon", LTC: "ltc-litecoin", BCH: "bch-bitcoin-cash",
+  ATOM: "atom-cosmos", UNI: "uni-uniswap", XLM: "xlm-stellar",
+  ETC: "etc-ethereum-classic", FIL: "fil-filecoin", APT: "apt-aptos",
+  ARB: "arb-arbitrum", OP: "op-optimism", NEAR: "near-near-protocol",
+  INJ: "inj-injective-protocol", SUI: "sui-sui", TON: "ton-the-open-network",
+  SHIB: "shib-shiba-inu", PEPE: "pepe-pepe",
+};
 
 // Exchanges enforce sanctions and refuse whole regions. Binance and Coinbase
 // both answer 403 to this Worker while answering 200 to the same request from
@@ -525,6 +544,151 @@ async function fromKraken(symbols) {
   return out;
 }
 
+/* ---- source: Coinpaprika ------------------------------------------ */
+
+/**
+ * Aggregator, no key, no regional gate.
+ *
+ * Coinbase and Kraken both answer 403 to this Worker from Middle East colos -
+ * they enforce sanctions against the egress IP, and no header changes that.
+ * Coinpaprika runs no exchange and custodies nothing, so it has no such gate.
+ *
+ * The trade is that /tickers carries no 24h high/low and no candles on the free
+ * tier. High and low are returned empty rather than zero, which the firmware
+ * reads as "no range" and omits from the footer instead of printing "0 - 0".
+ * The sparkline is empty for the same reason: the device simply draws no chart.
+ * A price with no chart beats a chart with no price.
+ */
+async function fromCoinpaprika(symbols) {
+  const wanted = [];
+  for (const s of symbols) {
+    const id = PAPRIKA_IDS[shortName(s)];
+    if (id) wanted.push({ symbol: s, id });
+  }
+  if (!wanted.length) return [];
+
+  const rows = await Promise.all(
+    wanted.map(async (w) => {
+      try {
+        return { w, r: await upstream(`${PAPRIKA}/tickers/${encodeURIComponent(w.id)}?quotes=USD`) };
+      } catch (_) {
+        return null;      // one missing coin must not condemn the source
+      }
+    })
+  );
+
+  const out = [];
+  for (const row of rows) {
+    if (!row || !row.r) continue;
+    const q = row.r.quotes && row.r.quotes.USD;
+    if (!q || !isFinite(Number(q.price))) continue;
+    out.push({
+      s: row.w.symbol,
+      d: shortName(row.w.symbol),
+      p: formatPrice(q.price),
+      c: Number(Number(q.percent_change_24h || 0).toFixed(2)),
+      h: "",
+      l: "",
+      k: [],
+    });
+  }
+  return out;
+}
+
+/* ---- source: Bybit ------------------------------------------------- */
+
+/** Bybit quotes USDT pairs under the symbol as given - BTCUSDT stays BTCUSDT. */
+async function fromBybit(symbols) {
+  const results = await Promise.all(
+    symbols.map(async (s) => {
+      let t;
+      try {
+        const r = await upstream(`${BYBIT}/v5/market/tickers?category=spot&symbol=${encodeURIComponent(s)}`);
+        t = r && r.result && r.result.list && r.result.list[0];
+      } catch (_) {
+        return null;
+      }
+      if (!t || !isFinite(Number(t.lastPrice))) return null;
+
+      let spark = [];
+      try {
+        // list is newest-first: [start, open, high, low, close, volume, turnover]
+        const k = await upstream(
+          `${BYBIT}/v5/market/kline?category=spot&symbol=${encodeURIComponent(s)}` +
+            `&interval=60&limit=${SPARK_POINTS}`
+        );
+        const rows = (k && k.result && k.result.list) || [];
+        spark = scaleSpark(rows.map((row) => row[4]).reverse());
+      } catch (_) {
+        spark = [];
+      }
+
+      // price24hPcnt is a fraction ("0.0032"), not a percentage.
+      const pct = Number(t.price24hPcnt);
+      return {
+        s,
+        d: shortName(s),
+        p: formatPrice(t.lastPrice),
+        c: Number(((isFinite(pct) ? pct : 0) * 100).toFixed(2)),
+        h: formatPrice(t.highPrice24h),
+        l: formatPrice(t.lowPrice24h),
+        k: spark,
+      };
+    })
+  );
+  return results.filter(Boolean);
+}
+
+/* ---- source: OKX ---------------------------------------------------- */
+
+/** BTCUSDT -> BTC-USDT. OKX uses a dash and quotes USDT widely. */
+function okxInst(symbol) {
+  return `${shortName(symbol)}-USDT`;
+}
+
+async function fromOkx(symbols) {
+  const results = await Promise.all(
+    symbols.map(async (s) => {
+      const inst = okxInst(s);
+      let t;
+      try {
+        const r = await upstream(`${OKX}/api/v5/market/ticker?instId=${encodeURIComponent(inst)}`);
+        t = r && r.data && r.data[0];
+      } catch (_) {
+        return null;
+      }
+      const last = Number(t && t.last);
+      if (!isFinite(last) || last <= 0) return null;
+
+      // OKX has no change field either, so it comes from open24h and last.
+      const open = Number(t.open24h);
+      const change = isFinite(open) && open > 0 ? ((last - open) / open) * 100 : 0;
+
+      let spark = [];
+      try {
+        // data is newest-first: [ts, open, high, low, close, vol, volCcy]
+        const k = await upstream(
+          `${OKX}/api/v5/market/candles?instId=${encodeURIComponent(inst)}&bar=1H&limit=${SPARK_POINTS}`
+        );
+        spark = scaleSpark(((k && k.data) || []).map((row) => row[4]).reverse());
+      } catch (_) {
+        spark = [];
+      }
+
+      return {
+        s,
+        d: shortName(s),
+        p: formatPrice(last),
+        c: Number(change.toFixed(2)),
+        h: formatPrice(t.high24h),
+        l: formatPrice(t.low24h),
+        k: spark,
+      };
+    })
+  );
+  return results.filter(Boolean);
+}
+
 /* ---- the route ---------------------------------------------------- */
 
 // Ordered by measured reachability from the edge, not by preference.
@@ -539,7 +703,25 @@ async function fromKraken(symbols) {
 // did. Binance is last for the same reason: it is a slow, reliable failure.
 // Both stay in the chain because they cost nothing once they are behind two
 // sources that work, and they cover pairs the others may not list.
+// Measured from the device's own colo on 2026-08-16, via the 502 body the
+// firmware now reports:
+//
+//   coinbase: 403   kraken: 403   coingecko: 429   binance: 403
+//
+// All four dead at once, while the same probe from a European colo minutes
+// earlier showed coinbase and kraken healthy. Cloudflare does not pin a client
+// to one colo, so "it worked when I tested it" and "the device sees 403" are
+// both true. Coinbase and Kraken enforce sanctions against the egress IP, which
+// no header can talk its way past.
+//
+// The chain therefore leads with venues that have no such gate: Coinpaprika is
+// a pure aggregator, and Bybit and OKX serve the region. The blocked four stay
+// on as coverage for pairs the leaders do not list, and for colos where they
+// do answer.
 const SOURCES = [
+  { name: "coinpaprika", fn: fromCoinpaprika },
+  { name: "bybit", fn: fromBybit },
+  { name: "okx", fn: fromOkx },
   { name: "coinbase", fn: fromCoinbase },
   { name: "kraken", fn: fromKraken },
   { name: "coingecko", fn: fromCoinGecko },

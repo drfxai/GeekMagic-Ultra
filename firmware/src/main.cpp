@@ -651,13 +651,19 @@ void handleSetConfig() {
     return;
   }
 
-  // Blank secret fields mean "keep whatever is already stored", so the browser
-  // never has to be told the current password or key.
-  auto putStr = [&](const char *k, char *dst, size_t cap, bool secret) -> bool {
+  // `blankKeeps` fields treat an empty string as "keep whatever is stored", so
+  // the browser never has to be told the current password or key.
+  //
+  // It also guards the bridge URL, which is not a secret but is the one field
+  // whose loss disables the clock, the signals and the prices in one go - and
+  // does so silently, since the settings page then looks merely empty rather
+  // than broken. There is no case where posting an empty bridge URL is what
+  // someone meant; clearing it for real is what Admin -> Factory reset is for.
+  auto putStr = [&](const char *k, char *dst, size_t cap, bool blankKeeps) -> bool {
     if (!doc[k].is<const char *>()) return false;
     const char *v = doc[k].as<const char *>();
     if (!v) return false;
-    if (secret && !*v) return false;
+    if (blankKeeps && !*v) return false;
     bool changed = (strcmp(dst, v) != 0);
     strlcpy(dst, v, cap);
     return changed;
@@ -670,7 +676,7 @@ void handleSetConfig() {
   netChanged |= putStr("pass2", cfg.pass2, sizeof(cfg.pass2), true);
   netChanged |= putStr("host", cfg.host, sizeof(cfg.host), false);
 
-  putStr("bridge", cfg.bridge, sizeof(cfg.bridge), false);
+  putStr("bridge", cfg.bridge, sizeof(cfg.bridge), true);   // blank = keep
   putStr("devKey", cfg.devKey, sizeof(cfg.devKey), true);
   putStr("devId", cfg.devId, sizeof(cfg.devId), false);
   putStr("adminUser", cfg.adminUser, sizeof(cfg.adminUser), false);

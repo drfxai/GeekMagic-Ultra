@@ -40,6 +40,34 @@ front of the source that did. Binance costs ~950 ms to return 403.
 - The device header showed a hardcoded `BINANCE` while displaying Coinbase
   prices. It now reads `src` off the wire and names whoever actually answered.
 
+**Saving the settings page could silently erase the bridge URL.** `save()` posts
+every field, and `loadConfig()` populates them — but nothing stopped a save from
+running after a *failed* load. When that happened the browser posted empty
+strings over `bridge`, `ssid`, `host`, `devId` and `symbols`. Secret fields
+survived, because blank means "keep" for those. The signature of the bug is
+therefore a device that still holds its device key but has lost its bridge URL,
+and a settings page that looks merely empty rather than broken.
+
+- `save()` now refuses to run until `/api/config` has been read back once.
+- `putStr`'s `secret` flag is renamed `blankKeeps` and now also covers `bridge`.
+  An empty bridge URL is never intentional — it disables the clock, the signals
+  and the prices at once. Factory reset is the way to actually clear it.
+
+**Coinbase and Kraken return 403 from Middle East colos.** Confirmed from the
+device's own 502 body: `coinbase: 403, kraken: 403, coingecko: 429,
+binance: 403` — all four dead — while a probe from a European colo minutes
+earlier showed Coinbase and Kraken healthy. Cloudflare does not pin a client to
+one colo, so both observations are true at once, and "it works when I test it in
+a browser" is not evidence that the device can reach anything.
+
+- Added **Coinpaprika** (pure aggregator, no key, no regional gate), **Bybit**
+  and **OKX**, and put them at the head of the chain. The four blocked sources
+  stay on for pair coverage and for colos where they do answer.
+- Coinpaprika has no 24h high/low or candles on the free tier. It returns empty
+  strings rather than zeros, so the footer omits the range instead of printing
+  `0 - 0`, and the device draws no sparkline. A price with no chart beats a
+  chart with no price.
+
 ## 2.1.1 — crypto: Binance blocks Cloudflare, so fall back to Coinbase
 
 Bridge only. No firmware change needed — redeploy the Worker and prices appear.

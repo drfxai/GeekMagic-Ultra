@@ -186,6 +186,12 @@ code{background:#0f1318;padding:2px 6px;border-radius:2px;color:var(--acc);font-
 
 <div id="toast"></div></div><script>
 var C={};
+// Has /api/config been read back successfully at least once? save() posts every
+// non-secret field, so saving from a page whose fields were never populated
+// writes empty strings over the bridge URL, SSID, host, device id and symbols.
+// Secrets survive that (blank means keep), which is why the classic symptom is
+// a device that still has its device key but has silently lost its bridge URL.
+var LOADED=false;
 var $=function(i){return document.getElementById(i)};
 document.querySelectorAll('nav button').forEach(function(b){b.onclick=function(){
   document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('on')});
@@ -315,7 +321,8 @@ function loadConfig(){
 
   if(c.hasPass)$('pass').placeholder='saved - leave blank to keep';
   if(c.hasDevKey)$('devKey').placeholder='saved - leave blank to keep';
- }).catch(function(){toast('Could not read settings',1)});
+  LOADED=true;
+ }).catch(function(){LOADED=false;toast('Could not read settings - do not save, reload first',1)});
 }
 
 function loadStatus(){
@@ -365,6 +372,9 @@ function loadStatus(){
 }
 
 function save(){
+ // Refuse to write settings that were never read. Otherwise a failed load
+ // followed by Save silently blanks every non-secret field on the device.
+ if(!LOADED){toast('Settings have not loaded yet - reload the page before saving',1);return;}
  var o=$('tz').options[$('tz').selectedIndex];
  var b={ssid:$('ssid').value,pass:$('pass').value,ssid2:$('ssid2').value,pass2:$('pass2').value,
   host:$('host').value,bridge:$('bridge').value.replace(/\/+$/,''),devKey:$('devKey').value,devId:$('devId').value,
