@@ -247,6 +247,16 @@ void buildSlots() {
     for (uint8_t i = 0; i < crypto.n && slotCount < (uint8_t)(2 + CRYPTO_MAX); i++) {
       if (crypto.has(i)) slots[slotCount++] = {SLOT_CRYPTO, i};
     }
+  } else if (cfg.showCrypto && crypto.error.length()) {
+    // Crypto is switched on but has never returned a usable set. Give it one
+    // slot anyway so drawCrypto can put its reason on the panel.
+    //
+    // Without this the failure is completely mute: no crypto slot is created,
+    // so the "NO DATA" card - the only thing that renders crypto.error - can
+    // never be reached on a device that has not had one good fetch. The
+    // carousel just quietly holds two screens instead of four, which looks
+    // identical to having crypto turned off.
+    slots[slotCount++] = {SLOT_CRYPTO, 0};
   }
 
   // Never leave the panel with nothing to draw. With the clock switched off and
@@ -356,7 +366,16 @@ void pinSignal() {
  * 16 kB buffer for its lifetime, and two at once is what a reboot looks like.
  */
 int bridgeGet(const String &path, String &payload) {
-  if (apMode || WiFi.status() != WL_CONNECTED) return -1;
+  // Say which it is. Returning bare -1 here left callers to fall back on a
+  // stale lastError from some earlier, unrelated failure.
+  if (apMode) {
+    lastError = F("access point mode, not joined to WiFi");
+    return -1;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    lastError = F("WiFi not connected");
+    return -1;
+  }
   // Report which half is missing. Returning silently here made an unsaved
   // bridge URL and an unsaved device key look identical on the Status tab.
   if (!cfg.bridge[0]) {
@@ -456,13 +475,23 @@ void pollBridge() {
 /**
  * Market prices, by way of the bridge.
  *
- * The Worker talks to Binance and hands back a few hundred bytes with the
- * sparkline already scaled - see bridge/worker.js. Doing it here directly would
- * mean a second TLS host and a second 16 kB buffer on a chip that has about
- * 39 kB to play with.
+ * The Worker walks a chain of upstreams - Coinbase, Kraken, CoinGecko, Binance
+ * - and hands back a few hundred bytes with the sparkline already scaled, plus
+ * the name of whichever one answered. See bridge/worker.js. Doing it here
+ * directly would mean a second TLS host and a second 16 kB buffer on a chip
+ * that has about 39 kB to play with.
  */
 void pollCrypto() {
-  if (!cfg.showCrypto || !cfg.symbols[0]) return;
+  if (!cfg.showCrypto) return;
+
+  // An empty symbol list is a configuration mistake, not a transient fault.
+  // This used to share the silent `return` below, so a device that had lost
+  // its symbols sat on "waiting for the bridge" forever with nothing anywhere
+  // - screen, status page or logs - to say why.
+  if (!cfg.symbols[0]) {
+    crypto.error = F("no symbols configured");
+    return;
+  }
 
   String path("/crypto?key=");
   path += urlEncode(cfg.devKey);
@@ -471,8 +500,13 @@ void pollCrypto() {
 
   String payload;
   int code = bridgeGet(path, payload);
-  if (code < 0) return;
 
+  // Do NOT return early on a negative code. bridgeGet uses -1 for "never
+  // attempted" (no WiFi, no bridge URL, no device key) and -2 for "skipped,
+  // low memory" - exactly the failures that are hardest to diagnose from the
+  // outside. An `if (code < 0) return;` here made both branches at the bottom
+  // of this function dead code, so the two most confusing ways for prices to
+  // vanish were also the only two that reported nothing at all.
   lastCryptoCode = code;
 
   if (code == HTTP_CODE_OK && cryptoFromJson(payload, crypto)) {

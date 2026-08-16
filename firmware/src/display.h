@@ -245,7 +245,10 @@ inline void drawCrypto(const Ticker &t, const CryptoSet &set) {
   const bool up = t.change >= 0;
   const uint32_t dir = up ? cfg.cBuy : cfg.cSell;
 
-  uiHeader("CRYPTO", String("BINANCE"), cfg.cAccent);
+  // Name whoever actually answered. Binance has been returning 403 to the
+  // Worker for some time, so a hardcoded "BINANCE" here was attributing
+  // Coinbase prices to an exchange that is not in the picture at all.
+  uiHeader("CRYPTO", set.src.length() ? set.src : String("BRIDGE"), cfg.cAccent);
 
   if (!t.valid()) {
     uiText(UI_PAD, 60, String("NO DATA"), UI_F_HEAD, uiDim());

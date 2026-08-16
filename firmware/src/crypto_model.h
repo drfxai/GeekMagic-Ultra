@@ -1,16 +1,20 @@
 /**
  * DrFX Ultra OS - market tickers from the bridge.
  *
- * The device never talks to Binance directly. It does not negotiate small TLS
- * fragments, so a direct HTTPS call would want a 16 kB receive buffer out of
+ * The device never talks to an exchange directly. It does not negotiate small
+ * TLS fragments, so a direct HTTPS call would want a 16 kB receive buffer out of
  * roughly 39 kB of free heap - while the bridge poll is periodically asking for
- * the same thing. The Worker fetches Binance instead and hands back a payload of
- * a few hundred bytes with the sparkline already scaled, which is the whole
+ * the same thing. The Worker fetches upstream instead and hands back a payload
+ * of a few hundred bytes with the sparkline already scaled, which is the whole
  * reason this struct is as small as it is.
+ *
+ * Which upstream that is changes at runtime: the Worker walks a chain of
+ * sources and reports the winner in "src". Do not assume Binance - it has been
+ * answering the Worker with 403 for some time, and Coinbase usually wins.
  *
  * Wire format (bridge GET /crypto):
  *
- *   {"v":"2.1.0","ts":1755180000000,"tickers":[
+ *   {"v":"2.1.1","src":"coinbase","ts":1755180000000,"tickers":[
  *     {"s":"BTCUSDT","d":"BTC","p":"118420.50","c":2.84,
  *      "h":"119802.00","l":"114210.00","k":[0,12,...,100]}]}
  *
@@ -45,6 +49,10 @@ struct CryptoSet {
   uint32_t rxMillis = 0;    // millis() when this set arrived
   bool ok = false;          // false until the first successful fetch
   String error;
+  // Which upstream the Worker actually used - "COINBASE", "KRAKEN", ... The
+  // bridge falls through a chain of sources, so this is not knowable at build
+  // time, and the header used to claim BINANCE regardless of who answered.
+  String src;
 
   bool has(uint8_t i) const { return i < n && t[i].valid(); }
   uint32_t ageSec() const { return ok ? (millis() - rxMillis) / 1000 : 0; }
@@ -119,5 +127,10 @@ inline bool cryptoFromJson(const String &body, CryptoSet &out) {
   out.rxMillis = millis();
   out.ok = true;
   out.error = "";
+
+  const char *src = doc["src"] | "";
+  out.src = String(src);
+  out.src.toUpperCase();      // the header face is caps-only
+
   return true;
 }

@@ -12,7 +12,7 @@
 #include <LittleFS.h>
 
 #define CFG_PATH "/config.json"
-#define FW_VERSION "2.1.0"
+#define FW_VERSION "2.1.1"
 
 struct Config {
   // --- network ---

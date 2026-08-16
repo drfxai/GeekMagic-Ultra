@@ -527,13 +527,23 @@ async function fromKraken(symbols) {
 
 /* ---- the route ---------------------------------------------------- */
 
-// Ordered by reachability, not by preference. The exchanges give exact pair
-// prices and would be first in a world where they answered.
+// Ordered by measured reachability from the edge, not by preference.
+//
+// Probed from two unrelated Cloudflare colos on 2026-08-16, same result both
+// times: coinbase and kraken answer in under 200 ms, coingecko returns 429 on
+// every call, and binance returns 403 after burning ~950 ms doing it.
+//
+// CoinGecko led this list because it is an aggregator and looked like the
+// safest default. In practice its free tier rate-limits Workers hard, so it
+// never won - it just added a wasted round trip in front of the source that
+// did. Binance is last for the same reason: it is a slow, reliable failure.
+// Both stay in the chain because they cost nothing once they are behind two
+// sources that work, and they cover pairs the others may not list.
 const SOURCES = [
-  { name: "coingecko", fn: fromCoinGecko },
   { name: "coinbase", fn: fromCoinbase },
-  { name: "binance", fn: fromBinance },
   { name: "kraken", fn: fromKraken },
+  { name: "coingecko", fn: fromCoinGecko },
+  { name: "binance", fn: fromBinance },
 ];
 
 async function handleCrypto(url, env) {

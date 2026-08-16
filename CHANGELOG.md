@@ -3,6 +3,43 @@
 Notable changes, newest first. Versions follow the firmware, and the bridge
 tracks the same major number.
 
+## 2.1.2 — crypto: stop failing silently, and stop leading with a dead source
+
+Both halves need deploying: redeploy the Worker **and** reflash the firmware.
+
+**A crypto fetch could fail without reporting anything, anywhere.** The Worker
+was healthy the whole time — probed from two unrelated Cloudflare colos it
+returned Coinbase prices in under 200 ms — but a device that never completed a
+fetch showed no crypto screen and no error, which is indistinguishable from
+having crypto switched off.
+
+- `pollCrypto()` returned early on any negative status from `bridgeGet()`. That
+  made the `-2` and fallback branches at the end of the same function
+  unreachable, so **"skipped, low memory", "WiFi not connected", "no bridge URL
+  saved" and "no device key saved" could never reach the screen or the status
+  page** — the four failures that are hardest to guess from the outside were the
+  four that said nothing. The early return is gone; negative codes now fall
+  through to the reporting branches.
+- `buildSlots()` only created a crypto slot when `crypto.ok` was true. Since
+  `crypto.ok` stays false until the first good fetch, `drawCrypto`'s "NO DATA"
+  card — the only thing that renders `crypto.error` on the panel — was
+  unreachable on exactly the devices that needed it. Crypto now gets one slot
+  when it is enabled and has an error to report.
+- An empty `symbols` list is reported as `no symbols configured` instead of
+  sharing the silent return.
+- `bridgeGet()` distinguishes AP mode from a dropped WiFi association rather
+  than returning a bare `-1` and leaving callers to print a stale `lastError`.
+
+**Source order now follows measurement rather than intent.** CoinGecko led the
+chain as the "safest default" aggregator, but its free tier rate-limits Workers:
+it returns 429 on every call, so it never won — it only added a round trip in
+front of the source that did. Binance costs ~950 ms to return 403.
+
+- Chain is now Coinbase → Kraken → CoinGecko → Binance. The two that answer go
+  first; the two that do not stay in as last-resort coverage.
+- The device header showed a hardcoded `BINANCE` while displaying Coinbase
+  prices. It now reads `src` off the wire and names whoever actually answered.
+
 ## 2.1.1 — crypto: Binance blocks Cloudflare, so fall back to Coinbase
 
 Bridge only. No firmware change needed — redeploy the Worker and prices appear.
