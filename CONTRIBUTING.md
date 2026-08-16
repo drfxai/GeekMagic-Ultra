@@ -17,7 +17,9 @@ Actions artifact, with their sizes reported in the run summary.
 
 ## Adding a screen
 
-Read [docs/DESIGN.md](docs/DESIGN.md) first. Then:
+Open [`ui/screens-preview.html`](ui/screens-preview.html) first — it renders
+every existing screen at true size, and the layout tokens it uses are the
+vocabulary a new screen should be built from. Then:
 
 1. Build it from the primitives in `firmware/src/ui.h`. If you need a pixel value
    that is not a position, it belongs in `ui.h` as a token, not in `display.h`.
@@ -91,8 +93,10 @@ reporting process and the list of known trade-offs that are not vulnerabilities.
 | code that runs on Cloudflare | `bridge/` |
 | a script that runs on your machine | `tools/`, standard library only |
 | data more than one component needs | `shared/` |
-| a guide | `docs/` |
 | a third-party file, unmodified | `vendor/`, with provenance in its README |
 
-`archive/` is for superseded artifacts only. Nothing there is built, tested or
-referenced by the current code — do not add to it as a way of keeping a draft.
+Setup instructions belong in [`QUICKSTART.md`](QUICKSTART.md) and nowhere else.
+It is deliberately the only guide in the repository: when the same step lived in
+several files, the copies drifted and readers followed whichever was wrong.
+Superseded material gets deleted rather than archived — Git already remembers
+it, and a folder of stale artifacts only invites people to follow them.

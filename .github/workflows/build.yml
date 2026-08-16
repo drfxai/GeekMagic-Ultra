@@ -83,14 +83,15 @@ jobs:
             echo "'NO' here means 'the stock updater will probably refuse this', not"
             echo "'this image is broken'."
             echo ""
-            echo "If neither image fits, flash once over UART - see docs/SETUP.md Part 3.2."
+            echo "If neither image fits, the first flash has to go over UART - see the"
+            echo "recovery notes in vendor/README.md."
             echo "After that the device runs our layout with ~3 MB of program area, and"
             echo "every later update is a browser upload via Admin -> Firmware update."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "full = $FULL bytes, slim = $SLIM bytes"
           if [ "$SLIM" -gt 450560 ]; then
-            echo "::warning::Slim image is $((SLIM/1024)) kB, over the ~440 kB OTA slot - first flash will need UART (docs/SETUP.md Part 3.2)."
+            echo "::warning::Slim image is $((SLIM/1024)) kB, over the ~440 kB OTA slot - first flash will need UART (see vendor/README.md)."
           fi
 
       - uses: actions/upload-artifact@v4

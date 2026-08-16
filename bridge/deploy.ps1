@@ -4,11 +4,12 @@
       cd C:\Users\Ultimate\Documents\GitHub\GeekMagic-Ultra
       .\bridge\deploy.ps1
 
-  Does the whole of SETUP.md Part 1:
+  Does the whole of QUICKSTART.md Step 2:
     - installs wrangler if missing
     - signs you into Cloudflare (opens your browser once)
-    - creates the godmode-signals KV namespace and writes its id into wrangler.toml
-    - uploads WEBHOOK_KEY and DEVICE_KEY, read straight out of SECRETS.local.md
+    - generates your two keys if you do not have them yet
+    - creates the SIGNALS KV namespace and writes its id into wrangler.toml
+    - uploads WEBHOOK_KEY and DEVICE_KEY
     - deploys, then checks the Worker actually answers
 
   Safe to re-run. Existing resources are reused, not duplicated.
@@ -44,10 +45,40 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # --- secrets file ---------------------------------------------------------
-Step 3 "Reading your keys from SECRETS.local.md"
+# 40 chars of crypto-random from a 62-letter alphabet. Generated here rather
+# than asked for, because "choose a long random string" reliably produces
+# something like trading2024, and these two keys are the whole of the
+# authentication story.
+function New-DrfxKey {
+  $bytes = New-Object byte[] 40
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+  $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+}
+
 $secretsPath = Join-Path (Split-Path $PSScriptRoot -Parent) "SECRETS.local.md"
 if (-not (Test-Path $secretsPath)) {
-  throw "SECRETS.local.md not found at $secretsPath - it holds the two generated keys."
+  Step 3 "No keys yet - generating two"
+  $genWebhook = New-DrfxKey
+  $genDevice  = New-DrfxKey
+  @"
+# DrFX Ultra OS - local secrets (NOT committed, .gitignore'd)
+
+Generated $(Get-Date -Format 'yyyy-MM-dd'). Keep this file private.
+
+| Name | Where it goes | Value |
+|---|---|---|
+| ``WEBHOOK_KEY`` | Cloudflare Worker secret; used by TradingView in the webhook URL | ``$genWebhook`` |
+| ``DEVICE_KEY``  | Cloudflare Worker secret; typed into the SmallTV Bridge tab | ``$genDevice`` |
+
+The deploy script reads this file, so keep the table shape if you edit it.
+To rotate a key: change it here, re-run the deploy script, then update the
+device's Bridge tab to match.
+"@ | Set-Content $secretsPath -Encoding UTF8
+  Write-Host "    written to SECRETS.local.md (git ignores it)" -ForegroundColor Green
+} else {
+  Step 3 "Reading your keys from SECRETS.local.md"
 }
 $secretsText = Get-Content $secretsPath -Raw
 

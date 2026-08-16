@@ -3,6 +3,26 @@
 Notable changes, newest first. Versions follow the firmware, and the bridge
 tracks the same major number.
 
+## 2.1.3 — public release
+
+Repository prepared for release. No functional change to the firmware or the
+bridge.
+
+- **One guide instead of five.** `docs/SETUP.md`, `docs/CLOUDFLARE.md`,
+  `docs/CLI.md` and `docs/DESIGN.md` are replaced by a single
+  [QUICKSTART.md](QUICKSTART.md) written to be followed by someone who has never
+  flashed anything. The same step used to live in several files, the copies
+  drifted, and readers followed whichever was wrong.
+- **`tools/keygen.html`** — an offline browser page that generates both keys and
+  assembles the webhook and bridge URLs for you. Nobody should be inventing
+  their own key material by hand.
+- **The deploy scripts now generate keys.** `deploy.sh` and `deploy.ps1` create
+  `SECRETS.local.md` on first run instead of failing when it is absent, so a
+  fresh clone deploys end to end with one command.
+- `archive/` is gone. Git remembers superseded work; a folder of stale artifacts
+  only invites people to follow it.
+- Added `marketing/` — a product brochure and the design philosophy behind it.
+
 ## 2.1.2 — crypto: stop failing silently, and stop leading with a dead source
 
 Both halves need deploying: redeploy the Worker **and** reflash the firmware.
@@ -198,8 +218,10 @@ table actually means.
 
 - New **minimal terminal** design language across the device, the settings page
   and the bridge's status page — black field, hairline rules, one accent per
-  screen, one large value carrying the meaning. Specified in
-  [docs/DESIGN.md](docs/DESIGN.md).
+  screen, one large value carrying the meaning. Specified at the time in
+  `docs/DESIGN.md`; the layout tokens now live in `firmware/src/ui.h` and every
+  screen can be viewed at true size in
+  [`ui/screens-preview.html`](ui/screens-preview.html).
 - New `firmware/src/ui.h`: the layout grid, colour derivation and drawing
   primitives now live in one place, so a change to the design language is a
   change to one file.

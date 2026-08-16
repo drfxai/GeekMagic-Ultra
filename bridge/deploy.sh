@@ -24,6 +24,34 @@ fi
 
 # Read the keys straight out of SECRETS.local.md so there is nothing to paste.
 SEC="../SECRETS.local.md"
+
+# 40 chars of crypto-random from a 62-letter alphabet. Generated rather than
+# asked for: "choose a long random string" reliably produces something like
+# trading2024, and these two keys are the whole of the authentication story.
+newkey() {
+  LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 40
+}
+
+if [ ! -f "$SEC" ]; then
+  echo "No keys yet - generating two..."
+  GEN_WK=$(newkey); GEN_DK=$(newkey)
+  cat > "$SEC" <<EOF
+# DrFX Ultra OS - local secrets (NOT committed, .gitignore'd)
+
+Generated $(date +%Y-%m-%d). Keep this file private.
+
+| Name | Where it goes | Value |
+|---|---|---|
+| \`WEBHOOK_KEY\` | Cloudflare Worker secret; used by TradingView in the webhook URL | \`$GEN_WK\` |
+| \`DEVICE_KEY\`  | Cloudflare Worker secret; typed into the SmallTV Bridge tab | \`$GEN_DK\` |
+
+The deploy script reads this file, so keep the table shape if you edit it.
+To rotate a key: change it here, re-run the deploy script, then update the
+device's Bridge tab to match.
+EOF
+  echo "Written to SECRETS.local.md (git ignores it)."
+fi
+
 getkey() {
   grep -F "$1" "$SEC" | grep -oE '`[A-Za-z0-9]{20,}`' | tr -d '`' | grep -v "^$1$" | head -1
 }

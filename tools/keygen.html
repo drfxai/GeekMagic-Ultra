@@ -1,0 +1,157 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DrFX Ultra OS - Key Generator</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  Offline key generator.
+
+  Double-click this file. It runs entirely in your browser - no network, no
+  server, nothing sent anywhere. Keys come from crypto.getRandomValues(), the
+  browser's cryptographic random source, not Math.random().
+
+  It exists so that nobody has to invent their own keys. People asked to "make
+  up a long random string" reliably produce something like trading2024, and
+  these two keys are the only thing standing between the open internet and
+  your screen.
+-->
+<style>
+  :root{--bg:#000;--fg:#e8e8f5;--dim:#6b7280;--accent:#8b5cf6;--ok:#22dd77;--line:#1f2430}
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+       font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  main{max-width:760px;margin:0 auto}
+  h1{font-size:18px;letter-spacing:.18em;color:var(--ok);margin:0 0 4px}
+  .sub{color:var(--dim);margin:0 0 28px;font-size:12px;letter-spacing:.08em}
+  h2{font-size:11px;letter-spacing:.18em;color:var(--dim);font-weight:400;
+     margin:26px 0 8px;text-transform:uppercase}
+  .key{display:flex;gap:8px;align-items:stretch}
+  input{flex:1;min-width:0;background:#0a0d14;border:1px solid var(--line);color:var(--fg);
+        padding:12px 14px;font:inherit;border-radius:6px;letter-spacing:.04em}
+  button{background:var(--accent);color:#fff;border:0;padding:12px 16px;font:inherit;
+         border-radius:6px;cursor:pointer;white-space:nowrap}
+  button:hover{filter:brightness(1.15)}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+  .note{color:var(--dim);font-size:12px;margin:8px 0 0}
+  .warn{border-left:2px solid var(--accent);padding:12px 16px;margin:28px 0 0;
+        background:#0a0d14;color:var(--dim);font-size:12px}
+  .warn b{color:var(--fg);font-weight:400}
+  hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+  #regen{margin-top:24px}
+</style>
+
+<main>
+  <h1>DRFX ULTRA OS</h1>
+  <p class="sub">KEY GENERATOR &middot; RUNS OFFLINE &middot; NOTHING IS SENT ANYWHERE</p>
+
+  <h2>1. Webhook key &mdash; TradingView uses this</h2>
+  <div class="key">
+    <input id="wk" readonly>
+    <button data-copy="wk">Copy</button>
+  </div>
+  <p class="note">Goes into Cloudflare as the secret <b>WEBHOOK_KEY</b>.</p>
+
+  <h2>2. Device key &mdash; your SmallTV uses this</h2>
+  <div class="key">
+    <input id="dk" readonly>
+    <button data-copy="dk">Copy</button>
+  </div>
+  <p class="note">Goes into Cloudflare as the secret <b>DEVICE_KEY</b>, and into
+    the device's Bridge tab.</p>
+
+  <hr>
+
+  <h2>3. Your worker name</h2>
+  <div class="key">
+    <input id="host" value="fx-godmode-bridge.YOURNAME.workers.dev"
+           placeholder="fx-godmode-bridge.YOURNAME.workers.dev" spellcheck="false">
+    <button class="ghost" id="apply">Update</button>
+  </div>
+  <p class="note">Cloudflare prints this when you deploy. Type it here and the
+    two addresses below fill themselves in.</p>
+
+  <h2>4. TradingView webhook URL</h2>
+  <div class="key">
+    <input id="tv" readonly>
+    <button data-copy="tv">Copy</button>
+  </div>
+  <p class="note">Paste into the <b>Webhook URL</b> box of a TradingView alert.</p>
+
+  <h2>5. Bridge URL for the device</h2>
+  <div class="key">
+    <input id="br" readonly>
+    <button data-copy="br">Copy</button>
+  </div>
+  <p class="note">Paste into <b>Bridge URL</b> on the device's settings page.
+    No slash at the end.</p>
+
+  <button id="regen" class="ghost">Generate new keys</button>
+
+  <div class="warn">
+    <b>Keep these private.</b> Anyone with the webhook key can push fake signals
+    to your screen; anyone with the device key can read them. They are not
+    passwords you need to remember &mdash; save this page's output somewhere safe,
+    or just come back and generate new ones, which instantly retires the old.
+    <br><br>
+    <b>Never commit them.</b> If you write them into a file, keep it out of Git.
+    The repository ignores <code>SECRETS.local.md</code> for exactly this.
+  </div>
+</main>
+
+<script>
+// 40 chars from an alphabet of 62 is ~238 bits of entropy - far past anything
+// brute-forceable, and still short enough to retype by hand if it comes to it.
+var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+var LENGTH = 40;
+
+function makeKey() {
+  var bytes = new Uint8Array(LENGTH);
+  crypto.getRandomValues(bytes);
+  var out = "";
+  // Rejection-free modulo is fine here: 256 % 62 leaves a bias under 1.6% on
+  // four of the letters, which is irrelevant against 238 bits of headroom.
+  for (var i = 0; i < LENGTH; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
+  return out;
+}
+
+function $(id) { return document.getElementById(id); }
+
+function host() {
+  return $("host").value.trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+}
+
+function refreshUrls() {
+  var h = host();
+  $("tv").value = "https://" + h + "/tv?key=" + $("wk").value;
+  $("br").value = "https://" + h;
+}
+
+function regen() {
+  $("wk").value = makeKey();
+  $("dk").value = makeKey();
+  refreshUrls();
+}
+
+document.addEventListener("click", function (e) {
+  var id = e.target.getAttribute && e.target.getAttribute("data-copy");
+  if (!id) return;
+  var el = $(id);
+  el.select();
+  el.setSelectionRange(0, 99999);
+  navigator.clipboard.writeText(el.value).then(function () {
+    var was = e.target.textContent;
+    e.target.textContent = "Copied";
+    setTimeout(function () { e.target.textContent = was; }, 1200);
+  }).catch(function () {
+    // clipboard API needs a secure context; file:// in some browsers is not one
+    document.execCommand("copy");
+  });
+});
+
+$("apply").addEventListener("click", refreshUrls);
+$("host").addEventListener("input", refreshUrls);
+$("regen").addEventListener("click", regen);
+
+regen();
+</script>

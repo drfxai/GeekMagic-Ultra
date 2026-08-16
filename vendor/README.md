@@ -16,10 +16,15 @@ device shipped with.
 | `update_history.txt` | GeekMagic's release notes for 9.0.x |
 
 **Why it is here.** Installing DrFX Ultra OS replaces the stock firmware
-completely and erases the photo album. This is the way back — see the recovery
-section of [docs/SETUP.md](../docs/SETUP.md). Keeping it in the repository means
-recovery does not depend on a third-party download page still being up years
-from now.
+completely and erases the photo album. This is the way back. Keeping it in the
+repository means recovery does not depend on a third-party download page still
+being up years from now.
+
+**To go back to stock**, flash `FW-Smalltv-Ultra-V9.0.50.bin` the same way you
+flashed DrFX Ultra OS: open the device's settings page, go to
+**Admin → Firmware update**, and upload it. Verify the checksum first (below).
+If the device will not boot far enough to serve that page, flash over UART with
+`esptool` instead.
 
 Verify before flashing:
 
