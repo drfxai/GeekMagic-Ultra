@@ -55,6 +55,35 @@ struct Signal {
   }
 };
 
+/**
+ * Cap the decimals on a price so it cannot run off a 240px panel.
+ *
+ * The bridge rounds properly before sending, so this is a backstop for the
+ * /api/push path, where a local script talks to the device directly and never
+ * passes through the Worker. It truncates rather than rounds - a last defence
+ * does not need to be perfect, it needs to keep the stop-loss on the screen.
+ *
+ * Three or more integer digits means metals, indices or crypto: two decimals.
+ * Anything smaller is an FX pair and keeps the precision it needs.
+ */
+inline String trimLevel(const String &s) {
+  const int dot = s.indexOf('.');
+  if (dot < 0) return s;
+  const int start = (s.length() && s[0] == '-') ? 1 : 0;
+
+  // Is the integer part just zero? Then every significant digit is to the
+  // right of the point and cutting to five would render a token as 0.00001.
+  bool subUnit = true;
+  for (int i = start; i < dot; i++) {
+    if (s[i] != '0') { subUnit = false; break; }
+  }
+
+  const int intDigits = dot - start;
+  const int keep = subUnit ? 8 : (intDigits >= 3 ? 2 : 5);
+  if ((int)s.length() - dot - 1 <= keep) return s;
+  return s.substring(0, dot + 1 + keep);
+}
+
 /* uint64 -> decimal string. Arduino's String has no 64-bit constructor and
    newlib-nano on the ESP8266 does not print %llu, so do it by hand. */
 inline String u64str(uint64_t v) {
@@ -78,11 +107,11 @@ inline bool signalFromJson(const String &body, Signal &out) {
   out.side = String(doc["side"].as<const char *>() ? doc["side"].as<const char *>() : "");
   out.score = doc["score"] | 0;
   out.conf = doc["conf"] | 0;
-  out.entry = String(doc["entry"].as<const char *>() ? doc["entry"].as<const char *>() : "");
-  out.tp1 = String(doc["tp1"].as<const char *>() ? doc["tp1"].as<const char *>() : "");
-  out.tp2 = String(doc["tp2"].as<const char *>() ? doc["tp2"].as<const char *>() : "");
-  out.tp3 = String(doc["tp3"].as<const char *>() ? doc["tp3"].as<const char *>() : "");
-  out.sl = String(doc["sl"].as<const char *>() ? doc["sl"].as<const char *>() : "");
+  out.entry = trimLevel(String(doc["entry"].as<const char *>() ? doc["entry"].as<const char *>() : ""));
+  out.tp1 = trimLevel(String(doc["tp1"].as<const char *>() ? doc["tp1"].as<const char *>() : ""));
+  out.tp2 = trimLevel(String(doc["tp2"].as<const char *>() ? doc["tp2"].as<const char *>() : ""));
+  out.tp3 = trimLevel(String(doc["tp3"].as<const char *>() ? doc["tp3"].as<const char *>() : ""));
+  out.sl = trimLevel(String(doc["sl"].as<const char *>() ? doc["sl"].as<const char *>() : ""));
   out.hit = (uint8_t)(doc["hit"] | 0);
   out.tf = String(doc["tf"].as<const char *>() ? doc["tf"].as<const char *>() : "");
   out.note = String(doc["note"].as<const char *>() ? doc["note"].as<const char *>() : "");

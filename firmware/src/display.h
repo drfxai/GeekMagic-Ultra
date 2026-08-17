@@ -166,77 +166,71 @@ inline void drawSignal(const Signal &s) {
     return;
   }
 
-  /* --- AI score, unchanged and still the anchor ------------------- */
-  uiLabel(UI_PAD, 78, "AI SCORE");
-  {
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%d", s.score);
-    uiText(UI_PAD, 88, String(buf), UI_F_NUM, dir);
-  }
-
-  uiVRule(104, 78, 144);
-
-  /* --- the target ladder ------------------------------------------ */
-  // Three rungs at 22px. A hit rung goes green and is ruled through; the one
-  // still in play gets the accent. Anything not yet supplied is simply absent
-  // rather than drawn blank.
+  /* --- the target ladder, now the whole width --------------------- */
+  //
+  // The AI score used to own the left third in a 48px face. On a 1.54" panel
+  // at arm's length that bought one number nobody trades off, while the levels
+  // that decide the trade were squeezed into 16px on the right and the next
+  // target had to be repeated underneath - where it collided with the stop.
+  // Score moves to the footer; the levels get the space.
+  //
+  // Rungs are packed, not indexed: two supplied targets fill the first two
+  // rows rather than leaving a hole where TP3 would have been.
+  uint8_t row = 0;
   for (uint8_t i = 0; i < 3; i++) {
-    const int rowY = 80 + i * 22;
     const String &val = s.target(i);
     if (!val.length()) continue;
 
+    const int rowY = 76 + row * 27;
     const bool done = (i < nHit);
     const bool live = (i == nHit);
     const uint32_t col = done ? cfg.cBuy : (live ? cfg.cText : uiDim());
 
-    if (live) {
-      // A 2px spine rather than a filled band: it survives a partial redraw
-      // and costs one fillRect.
-      tft.fillRect(108, rowY, 2, 16, rgb(cfg.cAccent));
-    }
+    // A spine outside the text margin marks the live rung without stealing
+    // width from the value.
+    if (live) tft.fillRect(6, rowY + 2, 3, 22, rgb(cfg.cAccent));
 
     char lab[5];
     snprintf(lab, sizeof(lab), "TP%u", (unsigned)(i + 1));
-    uiLabel(116, rowY + 4, lab, done ? cfg.cBuy : (live ? cfg.cAccent : uiDim()));
-    uiText(UI_W - UI_PAD, rowY, val, UI_F_BODY, col, TR_DATUM);
+    uiLabel(UI_PAD, rowY + 9, lab, done ? cfg.cBuy : (live ? cfg.cAccent : uiDim()));
+    uiText(UI_W - UI_PAD, rowY, val, UI_F_HEAD, col, TR_DATUM);
 
     if (done) {
-      const int w = tft.textWidth(val, UI_F_BODY);
-      tft.drawFastHLine(UI_W - UI_PAD - w, rowY + 8, w, rgb(cfg.cBuy));
+      const int w = tft.textWidth(val, UI_F_HEAD);
+      tft.drawFastHLine(UI_W - UI_PAD - w, rowY + 13, w, rgb(cfg.cBuy));
     }
+    row++;
   }
 
-  uiRule(148);
+  uiRule(162);
 
-  /* --- tally ------------------------------------------------------- */
+  /* --- how far the trade has got ----------------------------------- */
   if (nTargets) {
-    drawPips(UI_PAD, 160, nTargets, nHit, true);
+    drawPips(UI_PAD, 172, nTargets, nHit, true);
     char tally[20];
     snprintf(tally, sizeof(tally), "%u OF %u HIT", nHit, nTargets);
-    uiLabel(UI_PAD + nTargets * 14 + 6, 156, tally, nHit ? cfg.cBuy : uiDim());
+    uiLabel(UI_PAD + nTargets * 14 + 6, 168, tally, nHit ? cfg.cBuy : uiDim());
   }
 
-  /* --- what to watch next ------------------------------------------ */
-  const String nxt = s.nextTarget();
-  if (nxt.length()) {
-    uiLabel(UI_PAD, 174, "NEXT TARGET", cfg.cAccent);
-    uiText(UI_PAD, 184, nxt, UI_F_HEAD, cfg.cText);
-  } else if (nTargets) {
-    uiLabel(UI_PAD, 174, "ALL TARGETS MADE", cfg.cBuy);
-    uiText(UI_PAD, 184, String("DONE"), UI_F_HEAD, cfg.cBuy);
+  /* --- entry and stop, one on each side ---------------------------- */
+  // Two short values at opposite margins cannot overlap however long they get,
+  // which is what went wrong when the next target and the stop shared a line.
+  if (s.entry.length()) {
+    uiLabel(UI_PAD, 184, "ENTRY");
+    uiText(UI_PAD, 194, s.entry, UI_F_BODY, cfg.cText);
   }
-
   if (s.sl.length()) {
-    uiLabel(UI_W - UI_PAD, 174, "SL", uiDim(), TR_DATUM);
-    uiText(UI_W - UI_PAD, 184, s.sl, UI_F_HEAD, cfg.cSell, TR_DATUM);
+    uiLabel(UI_W - UI_PAD, 184, "SL", uiDim(), TR_DATUM);
+    uiText(UI_W - UI_PAD, 194, s.sl, UI_F_BODY, cfg.cSell, TR_DATUM);
   }
 
   /* --- footer ------------------------------------------------------ */
+  // Two padded columns. Previously the left string could grow until it butted
+  // straight into the right one - "ENTRY 4423.25CONF 50".
   String rr = riskReward(s);
-  String left = s.entry.length() ? (String("ENTRY ") + s.entry) : String("");
-  String right = String("CONF ") + String(s.conf);
-  if (rr.length()) right += String("  R:R ") + rr;
-  else if (!s.conf && s.note.length()) right = s.note;
+  String left = String("SCORE ") + String(s.score) + String("  CONF ") + String(s.conf);
+  String right = rr.length() ? (String("*R:R ") + rr)
+                             : (s.note.length() ? s.note : String(""));
   uiFooter(left, right, cfg.cAccent);
 }
 

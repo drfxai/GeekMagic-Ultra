@@ -139,11 +139,11 @@ async function handleWebhook(request, url, env) {
     side: parsed.side || "",
     score: clampInt(parsed.score, 0, 100, 0),
     conf: clampInt(parsed.conf, 0, 100, 0),
-    entry: str(parsed.entry, 12),
-    tp1: str(parsed.tp1, 12),
-    tp2: str(parsed.tp2, 12),
-    tp3: str(parsed.tp3, 12),
-    sl: str(parsed.sl, 12),
+    entry: level(parsed.entry),
+    tp1: level(parsed.tp1),
+    tp2: level(parsed.tp2),
+    tp3: level(parsed.tp3),
+    sl: level(parsed.sl),
     tf: str(parsed.tf, 6),
     hit: clampInt(parsed.hit, 0, 3, 0),
     note: str(parsed.note, 24),
@@ -1068,6 +1068,32 @@ async function readStore(env, device) {
 const kvKey = (d) => "sig:" + d;
 const sanitiseId = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24) || "main";
 const str = (v, n) => String(v === undefined || v === null ? "" : v).slice(0, n);
+
+/**
+ * Round a price level for a 240px panel.
+ *
+ * str() only ever truncated, and TradingView hands over full float precision -
+ * so "4422.5067475" is exactly 12 characters and survived intact, then ran off
+ * the edge of the screen and collided with the stop-loss beside it.
+ *
+ * Decimals follow the magnitude rather than a fixed 2, because 2dp is right for
+ * gold, indices and BTC but would render EURUSD as "1.10". Anything at or above
+ * 100 gets two; below that keeps the precision an FX pair needs, with trailing
+ * zeros trimmed. Non-numeric values ("market", "breakeven") pass through.
+ */
+function level(v, n = 12) {
+  if (v === undefined || v === null) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  const num = Number(s);
+  if (!isFinite(num)) return s.slice(0, n);
+
+  const a = Math.abs(num);
+  const d = a >= 100 ? 2 : a >= 1 ? 5 : 8;
+  let out = num.toFixed(d);
+  if (d > 2) out = out.replace(/0+$/, "").replace(/\.$/, "");
+  return out.slice(0, n);
+}
 
 function clampInt(v, lo, hi, dflt) {
   const n = Math.round(Number(String(v).replace(/[^0-9.\-]/g, "")));
