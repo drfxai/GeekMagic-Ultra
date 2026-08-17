@@ -118,9 +118,28 @@ Found a vulnerability? [SECURITY.md](SECURITY.md).
 
 ---
 
+## Don't want to build it yourself?
+
+The device software is free and always will be. If you'd rather skip the
+afternoon, or you want the **GOD MODE Quad Consensus** indicator it was written
+for, there are three options:
+
+| | | |
+|---|---|---|
+| **$25** | Program file | Built and tested, ready to flash, keys generated for you |
+| **$50** | Full package | Plus 1 month of GOD MODE on **TradingView and MetaTrader** |
+| **$181** | Lifetime | Lifetime GOD MODE access, both platforms, full indicator source |
+
+Full details in the brochure: [marketing/DrFX-Ultra-OS.pdf](marketing/DrFX-Ultra-OS.pdf)
+
+**Telegram** [@DrFXGOD](https://t.me/DrFXGOD) · **Channel**
+[@DrFXAi](https://t.me/DrFXAi) · **TradingView** `RaptorAlgo`
+
+---
+
 ## Contributing
 
 Pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-MIT licensed. Not affiliated with GeekMagic or TradingView.
+MIT licensed. Not affiliated with GeekMagic, TradingView or MetaQuotes.
 Nothing here is financial advice.

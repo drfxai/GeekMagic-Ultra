@@ -21,7 +21,9 @@ bridge.
   fresh clone deploys end to end with one command.
 - `archive/` is gone. Git remembers superseded work; a folder of stale artifacts
   only invites people to follow it.
-- Added `marketing/` — a product brochure and the design philosophy behind it.
+- Added `marketing/` — an eight-page product brochure, drawn entirely as vector
+  from the real UI geometry, plus the design philosophy behind it. Pricing,
+  the GOD MODE indicator and contact details are on pages 5, 7 and 8.
 
 ## 2.1.2 — crypto: stop failing silently, and stop leading with a dead source
 
