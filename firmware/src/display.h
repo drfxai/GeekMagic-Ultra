@@ -94,6 +94,22 @@ inline String riskReward(const Signal &s) {
   return String(buf);
 }
 
+/* Progress dots.
+ *
+ * The rung values are 16px type - readable at desk distance, not across a
+ * room. These dots carry the same fact in a form that survives being glanced
+ * at from the doorway, which is most of what this screen is for.
+ *
+ * y is the centre line, not the top. */
+inline void drawPips(int x, int y, uint8_t total, uint8_t hit, bool markNext) {
+  for (uint8_t i = 0; i < total; i++) {
+    const int cx = x + 4 + i * 14;
+    if (i < hit)                     tft.fillCircle(cx, y, 4, rgb(cfg.cBuy));
+    else if (markNext && i == hit)   tft.drawCircle(cx, y, 4, rgb(cfg.cAccent));
+    else                             tft.drawCircle(cx, y, 4, rgb(uiDim()));
+  }
+}
+
 inline void drawSignal(const Signal &s) {
   const bool sell = (s.side == "SELL");
   const bool flat = (s.side == "FLAT");
@@ -102,7 +118,9 @@ inline void drawSignal(const Signal &s) {
   uiClear();
 
   String hdrRight = s.tf.length() ? s.tf : String("LIVE");
-  uiHeader("SIGNAL", hdrRight, cfg.cAccent);
+  // A progressed trade is a different event from a fresh one, and the header
+  // is the only place to say so without spending body space on it.
+  uiHeader("SIGNAL", s.hit ? String("UPDATE") : hdrRight, cfg.cAccent);
 
   /* --- symbol and direction ------------------------------------- */
   uiText(UI_PAD, 38, s.symbol.length() ? s.symbol : String("---"),
@@ -123,47 +141,102 @@ inline void drawSignal(const Signal &s) {
 
   uiRule(72);
 
-  /* --- terminal events (TP hit, stopped out) --------------------- */
-  // These carry no fresh levels, so showing an empty TP/SL grid would be a
-  // lie. The note becomes the headline instead.
+  const uint8_t nTargets = s.targetCount();
+  const uint8_t nHit = s.hit;
+
+  /* --- terminal events (stopped out, closed) --------------------- */
+  // These carry no fresh levels, so showing an empty TP grid would be a lie.
+  // The note becomes the headline instead - but how far the trade got is
+  // still worth saying, so the tally survives the close.
   if (flat) {
     uiLabel(UI_PAD, 88, "POSITION CLOSED");
     uiText(UI_PAD, 104, s.note.length() ? s.note : String("closed"),
            UI_F_HEAD, cfg.cText);
+    if (nTargets) {
+      char tally[24];
+      snprintf(tally, sizeof(tally), "%u OF %u TARGETS MADE", nHit, nTargets);
+      uiLabel(UI_PAD, 150, tally, nHit ? cfg.cBuy : uiDim());
+      drawPips(UI_PAD, 166, nTargets, nHit, false);
+    }
     if (s.entry.length()) {
-      uiLabel(UI_PAD, 150, "PRICE");
-      uiText(UI_PAD, 163, s.entry, UI_F_HEAD, uiDim());
+      uiLabel(UI_W - UI_PAD, 150, "PRICE", uiDim(), TR_DATUM);
+      uiText(UI_W - UI_PAD, 162, s.entry, UI_F_HEAD, uiDim(), TR_DATUM);
     }
     uiFooter(String("*") + hdrRight, "", cfg.cAccent);
     return;
   }
 
-  /* --- score and confidence -------------------------------------- */
-  uiLabel(UI_PAD, 82, "AI SCORE");
+  /* --- AI score, unchanged and still the anchor ------------------- */
+  uiLabel(UI_PAD, 78, "AI SCORE");
   {
     char buf[8];
     snprintf(buf, sizeof(buf), "%d", s.score);
-    uiText(UI_PAD, 94, String(buf), UI_F_NUM, dir);
+    uiText(UI_PAD, 88, String(buf), UI_F_NUM, dir);
   }
 
-  uiVRule(112, 80, 148);
+  uiVRule(104, 78, 144);
 
-  uiLabel(126, 82, "CONFIDENCE");
-  uiText(UI_W - UI_PAD, 94, String(s.conf) + "%", UI_F_HEAD, cfg.cText, TR_DATUM);
-  uiBar(126, 128, UI_W - UI_PAD - 126, 3, s.conf, cfg.cAccent);
+  /* --- the target ladder ------------------------------------------ */
+  // Three rungs at 22px. A hit rung goes green and is ruled through; the one
+  // still in play gets the accent. Anything not yet supplied is simply absent
+  // rather than drawn blank.
+  for (uint8_t i = 0; i < 3; i++) {
+    const int rowY = 80 + i * 22;
+    const String &val = s.target(i);
+    if (!val.length()) continue;
 
-  uiRule(152);
+    const bool done = (i < nHit);
+    const bool live = (i == nHit);
+    const uint32_t col = done ? cfg.cBuy : (live ? cfg.cText : uiDim());
 
-  /* --- levels ----------------------------------------------------- */
-  uiCell(UI_PAD, 162, "TP1", s.tp1, cfg.cBuy);
-  uiCell(96, 162, "TP2", s.tp2, cfg.cBuy);
-  uiCell(UI_W - UI_PAD, 162, "SL", s.sl, cfg.cSell, TR_DATUM);
+    if (live) {
+      // A 2px spine rather than a filled band: it survives a partial redraw
+      // and costs one fillRect.
+      tft.fillRect(108, rowY, 2, 16, rgb(cfg.cAccent));
+    }
+
+    char lab[5];
+    snprintf(lab, sizeof(lab), "TP%u", (unsigned)(i + 1));
+    uiLabel(116, rowY + 4, lab, done ? cfg.cBuy : (live ? cfg.cAccent : uiDim()));
+    uiText(UI_W - UI_PAD, rowY, val, UI_F_BODY, col, TR_DATUM);
+
+    if (done) {
+      const int w = tft.textWidth(val, UI_F_BODY);
+      tft.drawFastHLine(UI_W - UI_PAD - w, rowY + 8, w, rgb(cfg.cBuy));
+    }
+  }
+
+  uiRule(148);
+
+  /* --- tally ------------------------------------------------------- */
+  if (nTargets) {
+    drawPips(UI_PAD, 160, nTargets, nHit, true);
+    char tally[20];
+    snprintf(tally, sizeof(tally), "%u OF %u HIT", nHit, nTargets);
+    uiLabel(UI_PAD + nTargets * 14 + 6, 156, tally, nHit ? cfg.cBuy : uiDim());
+  }
+
+  /* --- what to watch next ------------------------------------------ */
+  const String nxt = s.nextTarget();
+  if (nxt.length()) {
+    uiLabel(UI_PAD, 174, "NEXT TARGET", cfg.cAccent);
+    uiText(UI_PAD, 184, nxt, UI_F_HEAD, cfg.cText);
+  } else if (nTargets) {
+    uiLabel(UI_PAD, 174, "ALL TARGETS MADE", cfg.cBuy);
+    uiText(UI_PAD, 184, String("DONE"), UI_F_HEAD, cfg.cBuy);
+  }
+
+  if (s.sl.length()) {
+    uiLabel(UI_W - UI_PAD, 174, "SL", uiDim(), TR_DATUM);
+    uiText(UI_W - UI_PAD, 184, s.sl, UI_F_HEAD, cfg.cSell, TR_DATUM);
+  }
 
   /* --- footer ------------------------------------------------------ */
   String rr = riskReward(s);
   String left = s.entry.length() ? (String("ENTRY ") + s.entry) : String("");
-  String right = rr.length() ? (String("*R:R ") + rr)
-                             : (s.note.length() ? s.note : String(""));
+  String right = String("CONF ") + String(s.conf);
+  if (rr.length()) right += String("  R:R ") + rr;
+  else if (!s.conf && s.note.length()) right = s.note;
   uiFooter(left, right, cfg.cAccent);
 }
 

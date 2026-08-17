@@ -24,7 +24,7 @@
  * KV namespace binding: SIGNALS
  */
 
-const BRIDGE_VERSION = "2.1.1";
+const BRIDGE_VERSION = "2.2.0";
 const MAX_BODY = 8 * 1024;      // reject silly-sized alert bodies
 const HISTORY = 24;             // how many past signals to keep
 const TTL = 60 * 60 * 24 * 7;   // KV entries expire after a week
@@ -36,11 +36,10 @@ const TTL = 60 * 60 * 24 * 7;   // KV entries expire after a week
 // none from here. Binance simply refuses Cloudflare's egress ranges, and no
 // header we can send changes that.
 //
-// So market data comes from whichever source answers. Binance stays first
-// because it has the best coverage and may work from edges we have not seen,
-// and Coinbase backs it up: a public API with no key, no datacenter blocking,
-// and both a 24h summary and hourly candles. Whichever wins is named in the
-// reply, so a screen showing the wrong price can be traced to its source.
+// So market data comes from whichever source answers, and the winner is named
+// in the reply so a screen showing an odd price can be traced to its source.
+// The chain order is set by measurement, not preference - see SOURCES below.
+//
 // 90s, not 20. The device polls every 30s and backs off to 120s after a few
 // failures, so a 20s TTL guaranteed it never once hit a warm cache - every
 // single fetch paid for a cold upstream round trip. Prices on a glanceable
@@ -74,13 +73,6 @@ const PAPRIKA_IDS = {
   SHIB: "shib-shiba-inu", PEPE: "pepe-pepe",
 };
 
-// Exchanges enforce sanctions and refuse whole regions. Binance and Coinbase
-// both answer 403 to this Worker while answering 200 to the same request from
-// a home connection a few metres away - the block follows the egress, not the
-// caller. Aggregators and smaller venues do not carry the same exposure, so the
-// chain leads with CoinGecko: it is not an exchange, it serves price, 24h range,
-// change and a sparkline in ONE request, and it has no regional gate.
-//
 // CoinGecko keys prices by coin id, not by trading pair. Only the pairs listed
 // here can be resolved; anything else falls through to the exchange sources,
 // which is the right order of preference anyway when they are reachable.
@@ -150,12 +142,48 @@ async function handleWebhook(request, url, env) {
     entry: str(parsed.entry, 12),
     tp1: str(parsed.tp1, 12),
     tp2: str(parsed.tp2, 12),
+    tp3: str(parsed.tp3, 12),
     sl: str(parsed.sl, 12),
     tf: str(parsed.tf, 6),
+    hit: clampInt(parsed.hit, 0, 3, 0),
     note: str(parsed.note, 24),
   };
 
   const store = (await readStore(env, device)) || { latest: null, history: [] };
+
+  // A "TP1 hit" alert carries a symbol, a price and nothing else - the levels
+  // live in the entry alert that opened the trade. Storing it as-is would
+  // replace a full card with an almost empty one, so the levels, score and
+  // direction are inherited from the open signal and only the tally moves.
+  //
+  // Guarded on the symbol matching: a progress event for EURUSD must not
+  // inherit the levels of an open XAUUSD trade.
+  const prev = store.latest;
+  const canMerge = parsed.progress && prev && prev.symbol === rec.symbol &&
+                   prev.side && prev.side !== "FLAT";
+
+  // An orphan progress event - "TP1 hit" for a trade this bridge never saw
+  // opened, usually after a restart or a KV expiry. There are no levels to
+  // advance towards, so report it as the terminal note it effectively is
+  // rather than storing a card with a symbol and no direction.
+  if (parsed.progress && !canMerge) rec.side = "FLAT";
+
+  if (canMerge) {
+    rec.side = prev.side;
+    rec.score = prev.score;
+    rec.conf = prev.conf;
+    rec.tf = rec.tf || prev.tf;
+    rec.entry = prev.entry;
+    rec.tp1 = prev.tp1;
+    rec.tp2 = prev.tp2;
+    rec.tp3 = prev.tp3;
+    // The stop is the one level a progress alert may legitimately move - a
+    // script that trails to breakeven sends the new value. Absent, keep the old.
+    rec.sl = rec.sl || prev.sl;
+    // Never go backwards: a duplicate or out-of-order TP1 must not un-hit TP2.
+    rec.hit = Math.max(rec.hit, clampInt(prev.hit, 0, 3, 0));
+  }
+
   store.latest = rec;
   store.history = [rec, ...(store.history || [])].slice(0, HISTORY);
 
@@ -800,7 +828,9 @@ async function handleStatus(url, env) {
       (r) =>
         `<tr><td class="t">${new Date(r.ts).toISOString().replace("T", " ").slice(0, 19)}Z</td>` +
         `<td>${esc(r.symbol)}</td><td class="${r.side === "SELL" ? "s" : r.side === "FLAT" ? "f" : "b"}">${esc(r.side)}</td>` +
-        `<td>${r.score}</td><td>${esc(r.tp1)}</td><td>${esc(r.tp2)}</td><td>${esc(r.sl)}</td></tr>`
+        `<td>${r.score}</td><td>${esc(r.tp1)}</td><td>${esc(r.tp2)}</td>` +
+        `<td>${esc(r.tp3)}</td><td>${r.hit ? r.hit + "/3" : ""}</td>` +
+        `<td>${esc(r.sl)}</td></tr>`
     )
     .join("");
 
@@ -835,7 +865,7 @@ async function handleStatus(url, env) {
       ? "last signal " + new Date(store.latest.ts).toUTCString()
       : "no signals received yet"
   }</p>
-<table><tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th>Score</th><th>TP1</th><th>TP2</th><th>SL</th></tr>${
+<table><tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th>Score</th><th>TP1</th><th>TP2</th><th>TP3</th><th>Hit</th><th>SL</th></tr>${
     rows || '<tr><td colspan="7" class="empty">Waiting for the first TradingView alert&hellip;</td></tr>'
   }</table>
 <footer><span>Bridge v${BRIDGE_VERSION}</span><span>${esc(new Date().toISOString().slice(0, 19))}Z</span></footer>
@@ -873,13 +903,27 @@ function parseDrfxTag(jsonText) {
   const dir = String(j.direction || "").toUpperCase();
   let side = dir === "LONG" ? "BUY" : dir === "SHORT" ? "SELL" : "";
   let note = "";
+  let hit;
+  let progress = false;
 
-  if (ev === "tp1" || ev === "tp2" || ev === "tp3") {
-    side = "FLAT";
+  // A first or second target is NOT the end of the trade - there is still a
+  // rung above it. Those events used to be flattened to FLAT, which closed the
+  // card and threw away the remaining levels; the screen then had nothing to
+  // count towards. They are now progress updates that merge into the open
+  // signal (see handleWebhook) and only advance the tally.
+  //
+  // The final target, a stop and an explicit close are genuinely terminal.
+  if (ev === "tp1" || ev === "tp2") {
+    hit = ev === "tp1" ? 1 : 2;
+    progress = true;
     note = ev.toUpperCase() + " hit";
+  } else if (ev === "tp3") {
+    side = "FLAT";
+    hit = 3;
+    note = "TP3 hit - all targets";
   } else if (ev === "sl") {
     side = "FLAT";
-    note = j.result === "win" ? "stop, TP2 made" : "stopped out";
+    note = j.result === "win" ? "stop, targets made" : "stopped out";
   } else if (ev === "close") {
     side = "FLAT";
     note = String(j.reason || "closed");
@@ -900,8 +944,11 @@ function parseDrfxTag(jsonText) {
     entry: j.entry !== undefined ? j.entry : j.price,
     tp1: j.tp1,
     tp2: j.tp2,
+    tp3: j.tp3,
     sl: j.sl,
     tf: j.tf,
+    hit,
+    progress,
     note,
   };
 }
@@ -996,8 +1043,10 @@ function parseAlert(raw) {
     entry: pick("entry", "price", "close", "e"),
     tp1: pick("tp1", "tp", "target1", "target", "takeprofit1", "take_profit_1"),
     tp2: pick("tp2", "target2", "takeprofit2", "take_profit_2"),
+    tp3: pick("tp3", "target3", "takeprofit3", "take_profit_3"),
     sl: pick("sl", "stop", "stoploss", "stop_loss", "loss"),
     tf: pick("tf", "timeframe", "interval"),
+    hit: pick("hit", "hits", "tp_hit", "targets_hit", "tpshit"),
     note: pick("note", "comment", "msg", "message", "strategy"),
   };
 }

@@ -23,12 +23,36 @@ struct Signal {
   String entry;
   String tp1;
   String tp2;
+  String tp3;
   String sl;
   String tf;
   String note;
+  // How many targets have been reached, 0-3. The device cannot work this out
+  // for itself - it has no price feed for anything but crypto - so the bridge
+  // reports it. See parseDrfxTag() in bridge/worker.js.
+  uint8_t hit = 0;
   uint32_t rxMillis = 0;  // millis() when this device received it
 
   bool valid() const { return symbol.length() > 0 || side.length() > 0; }
+
+  /* Only the targets actually supplied are drawn. An alert that carries two
+     levels shows two rungs, not three with a blank. */
+  uint8_t targetCount() const {
+    uint8_t n = 0;
+    if (tp1.length()) n++;
+    if (tp2.length()) n++;
+    if (tp3.length()) n++;
+    return n;
+  }
+
+  const String &target(uint8_t i) const {
+    return (i == 0) ? tp1 : (i == 1) ? tp2 : tp3;
+  }
+
+  /* The level still in play, or empty once every target is made. */
+  String nextTarget() const {
+    return (hit < targetCount()) ? target(hit) : String();
+  }
 };
 
 /* uint64 -> decimal string. Arduino's String has no 64-bit constructor and
@@ -57,7 +81,9 @@ inline bool signalFromJson(const String &body, Signal &out) {
   out.entry = String(doc["entry"].as<const char *>() ? doc["entry"].as<const char *>() : "");
   out.tp1 = String(doc["tp1"].as<const char *>() ? doc["tp1"].as<const char *>() : "");
   out.tp2 = String(doc["tp2"].as<const char *>() ? doc["tp2"].as<const char *>() : "");
+  out.tp3 = String(doc["tp3"].as<const char *>() ? doc["tp3"].as<const char *>() : "");
   out.sl = String(doc["sl"].as<const char *>() ? doc["sl"].as<const char *>() : "");
+  out.hit = (uint8_t)(doc["hit"] | 0);
   out.tf = String(doc["tf"].as<const char *>() ? doc["tf"].as<const char *>() : "");
   out.note = String(doc["note"].as<const char *>() ? doc["note"].as<const char *>() : "");
   out.rxMillis = millis();
@@ -68,6 +94,9 @@ inline bool signalFromJson(const String &body, Signal &out) {
   if (out.score > 100) out.score = 100;
   if (out.conf < 0) out.conf = 0;
   if (out.conf > 100) out.conf = 100;
+  // A hit count larger than the number of supplied targets would light pips
+  // that have no rung above them.
+  if (out.hit > out.targetCount()) out.hit = out.targetCount();
 
   return out.valid();
 }

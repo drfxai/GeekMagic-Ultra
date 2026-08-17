@@ -187,25 +187,61 @@ S.push([ 'Quantum Dashboard', screen({id:'DRFX QUANTUM',hr:'AI ●',body:`
   </div>`,
   ft:`<span>Equity $12,840</span><span class="ac">● Engine Online</span>`}) ]);
 
-/* 02 — Live signal */
-S.push([ 'Live Signal', screen({id:'SIGNAL',hr:'14:02:41',body:`
+/* 02 — Live signal.
+   Three targets. A reached rung goes green and is ruled through; the one still
+   in play carries the accent spine and its value is repeated large below, so
+   the number you are waiting on is never something you have to hunt for. */
+const rung = (n, val, state) => {
+  const col = state === 'done' ? 'var(--g)' : state === 'live' ? 'var(--tx)' : 'var(--dim)';
+  const lab = state === 'done' ? 'var(--g)' : state === 'live' ? 'var(--v)' : 'var(--dim)';
+  return `<div style="display:flex;align-items:center;gap:6px;height:19px">
+    <div style="width:2px;height:15px;background:${state === 'live' ? 'var(--v)' : 'transparent'}"></div>
+    <div class="lbl" style="color:${lab};min-width:24px">TP${n}</div>
+    <div style="flex:1"></div>
+    <div class="num" style="font-size:12.5px;color:${col};${state === 'done' ? 'text-decoration:line-through' : ''}">${val}</div>
+  </div>`;
+};
+const pips = (total, hit) => Array.from({length: total}, (_, i) =>
+  `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;${
+    i < hit ? 'background:var(--g)'
+            : 'border:1px solid ' + (i === hit ? 'var(--v)' : 'var(--dim2)')}"></span>`).join('');
+
+const signalCard = (hit, hr) => screen({id:'SIGNAL',hr:hr,body:`
   <div style="display:flex;align-items:baseline;justify-content:space-between">
     <div style="font-size:19px;font-weight:700;letter-spacing:.02em">XAUUSD</div>
-    <div class="tag blink">New</div>
-  </div>
-  <div class="big" style="font-size:44px;margin-top:6px">BUY ↑</div>
-  <div style="margin-top:12px" class="lbl">Confidence</div>
-  <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
-    <div class="mtr" style="flex:1"><i style="width:94%"></i></div>
-    <div class="num ac" style="font-size:13px;font-weight:700">94%</div>
+    <div class="big" style="font-size:19px;color:var(--g)">BUY ↑</div>
   </div>
   <div class="hr"></div>
-  <div style="display:flex;text-align:center;font-variant-numeric:tabular-nums">
-    <div style="flex:1"><div class="lbl">TP1</div><div style="font-size:12.5px">3378</div></div>
-    <div style="flex:1;border-left:1px solid var(--line)"><div class="lbl">TP2</div><div style="font-size:12.5px">3386</div></div>
-    <div style="flex:1;border-left:1px solid var(--line)"><div class="lbl">SL</div><div style="font-size:12.5px;color:var(--r)">3362</div></div>
+  <div style="display:flex;gap:10px">
+    <div style="flex:none;width:74px">
+      <div class="lbl">AI Score</div>
+      <div class="big num" style="font-size:40px;color:var(--g);line-height:1">96</div>
+    </div>
+    <div style="flex:1;border-left:1px solid var(--line);padding-left:10px">
+      ${rung(1,'3378', hit>0?'done':'live')}
+      ${rung(2,'3386', hit>1?'done':hit===1?'live':'')}
+      ${rung(3,'3392', hit>2?'done':hit===2?'live':'')}
+    </div>
+  </div>
+  <div class="hr"></div>
+  <div style="display:flex;align-items:center">
+    ${pips(3,hit)}
+    <span class="lbl" style="color:${hit?'var(--g)':'var(--dim)'}">${hit} of 3 hit</span>
+  </div>
+  <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-top:7px">
+    <div>
+      <div class="lbl" style="color:var(--v)">Next target</div>
+      <div class="num" style="font-size:17px">${['3378','3386','3392','—'][hit]}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="lbl">SL</div>
+      <div class="num" style="font-size:15px;color:var(--r)">${hit>0?'3370':'3362'}</div>
+    </div>
   </div>`,
-  ft:`<span>Entry 3371.40</span><span>R:R 1 : 2.4</span>`}) ]);
+  ft:`<span>Entry 3370</span><span>Conf 94 &nbsp; R:R 1 : 2.4</span>`});
+
+S.push([ 'Live Signal', signalCard(0,'14:02:41') ]);
+S.push([ 'Signal Update — 2 of 3', signalCard(2,'Update') ]);
 
 /* 03 — Crypto terminal */
 S.push([ 'Crypto Terminal', screen({id:'BTC / USD',hr:'Binance',ac:'var(--a)',body:`

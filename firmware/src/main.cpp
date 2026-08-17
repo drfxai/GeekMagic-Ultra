@@ -827,7 +827,11 @@ void handleStatus() {
   s["conf"] = current.conf;
   s["tp1"] = current.tp1;
   s["tp2"] = current.tp2;
+  s["tp3"] = current.tp3;
   s["sl"] = current.sl;
+  s["hit"] = current.hit;
+  s["targets"] = current.targetCount();
+  s["next"] = current.nextTarget();
   s["ageSec"] = current.valid() ? (millis() - current.rxMillis) / 1000 : 0;
 
   sendJson(doc);

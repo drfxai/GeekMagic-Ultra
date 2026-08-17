@@ -28,9 +28,19 @@
 {"symbol":"{{ticker}}","side":"BUY"}
 
 
-// 2. TYPICAL - an indicator alert with fixed levels
+// 2. TYPICAL - an indicator alert with three fixed levels
 {"symbol":"{{ticker}}","side":"BUY","score":90,"conf":85,
- "tp1":"3378","tp2":"3386","sl":"3362","tf":"{{interval}}"}
+ "tp1":"3378","tp2":"3386","tp3":"3392","sl":"3362","tf":"{{interval}}"}
+
+
+// 2b. TARGET REACHED - send this from a second alert when a level is touched.
+//     "hit" is how many targets are now done, NOT which one just fired.
+//     The bridge keeps the levels from the entry alert, so you only need the
+//     symbol and the count. Send "hit":3 and the trade closes as complete.
+{"symbol":"{{ticker}}","hit":1}
+
+//     Trailing the stop at the same time is optional:
+{"symbol":"{{ticker}}","hit":2,"sl":"3370"}
 
 
 // 3. FROM PLOTS - levels come from your Pine script's plot() outputs.
@@ -60,10 +70,14 @@ XAUUSD BUY score=96 conf=94 tp1=3378 tp2=3386 sl=3362
 //   symbol   text, up to 12 chars   shown large on the card
 //   side     BUY | SELL | FLAT      sets the colour and the arrow
 //                                   (LONG/SHORT/CLOSE are accepted too)
-//   score    0-100                  drives the big ring gauge
-//   conf     0-100                  shown as CONF at bottom right
-//   entry    text                   currently unused by the display
-//   tp1,tp2  text                   shown in green
+//   score    0-100                  drives the big AI SCORE figure
+//   conf     0-100                  shown as CONF in the footer
+//   entry    text                   shown in the footer
+//   tp1..tp3 text                   the target ladder; supply 1, 2 or 3
+//   hit      0-3                    how many targets are done. Reached rungs
+//                                   turn green and are ruled through, the next
+//                                   one is highlighted and its value repeated
+//                                   large as NEXT TARGET
 //   sl       text                   shown in red
 //   tf       text, up to 6 chars    timeframe, e.g. 15
 //   note     text, up to 24 chars   free text

@@ -3,6 +3,41 @@
 Notable changes, newest first. Versions follow the firmware, and the bridge
 tracks the same major number.
 
+## 2.2.0 — three targets, and a trade you can follow
+
+Both halves: redeploy the Worker **and** reflash the firmware. Old firmware
+ignores the new fields and keeps working; old alerts that send only `tp1`/`tp2`
+render as a two-rung ladder rather than three with a blank.
+
+**A first target is no longer the end of the trade.** `event:"tp1"` and
+`event:"tp2"` from the GOD MODE tag used to be flattened to `FLAT` with a note,
+which closed the card and discarded the remaining levels — the screen then had
+nothing left to count towards. They are now *progress* events:
+
+- The bridge merges them into the open signal, keeping the direction, score and
+  levels from the entry alert and advancing only the tally. Merging is guarded
+  on the symbol matching, so a EURUSD update cannot inherit an open XAUUSD
+  trade's levels, and the count never moves backwards on a duplicate or
+  out-of-order alert.
+- A trailing stop is the one level a progress alert may move. Send `sl` with it
+  and the new value is kept; omit it and the original stands.
+- An orphan progress event — "TP1 hit" for a trade the bridge never saw open,
+  after a restart or a KV expiry — is reported as terminal rather than stored as
+  a card with a symbol and no direction.
+- `tp3`, `sl` and `close` remain genuinely terminal.
+
+**New wire fields**: `tp3` (aliases `target3`, `takeprofit3`) and `hit`, an
+integer 0–3 (aliases `hits`, `tp_hit`, `targets_hit`). `hit` is *how many
+targets are done*, not which one just fired.
+
+**The signal screen keeps its AI score and gains a ladder.** The two-cell
+TP1/TP2 row is replaced by three rungs: reached ones turn green and are ruled
+through, the one in play takes an accent spine, and its value is repeated large
+underneath as NEXT TARGET so the number you are waiting on needs no hunting. A
+row of dots carries the same fact at doorway distance, where 16px type cannot.
+The header reads UPDATE instead of the timeframe once a target is in. A closed
+position now still reports how far it got.
+
 ## 2.1.3 — public release
 
 Repository prepared for release. No functional change to the firmware or the
