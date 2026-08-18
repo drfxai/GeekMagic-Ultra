@@ -1,5 +1,5 @@
 {
-  "ssid": "Dr Pouria's Z Flip3",
+  "ssid": "Google 2G",
   "ssid2": "",
   "host": "godmode",
   "bridge": "https://fx-godmode-bridge.drfxai.workers.dev",
@@ -17,8 +17,8 @@
   "showCrypto": true,
   "cryptoSec": 30,
   "symbols": "BTCUSDT,ETHUSDT",
-  "tz": "<+0330>-3:30",
-  "tzName": "Asia/Tehran",
+  "tz": "<+0100>+1:00",
+  "tzName": "Europe/London",
   "cAccent": 9133302,
   "cBuy": 2284919,
   "cSell": 16731486,
