@@ -104,14 +104,26 @@ inline void tzFromMinutes(int16_t m, char *out, size_t cap) {
 }
 
 inline bool cfgLoad() {
-  if (!LittleFS.exists(CFG_PATH)) return false;
+  if (!LittleFS.exists(CFG_PATH)) {
+    Serial.println(F("!! " CFG_PATH " not found on flash"));
+    return false;
+  }
   File f = LittleFS.open(CFG_PATH, "r");
-  if (!f) return false;
+  if (!f) {
+    Serial.println(F("!! " CFG_PATH " open failed"));
+    return false;
+  }
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-  if (err) return false;
+  if (err) {
+    // Corrupt JSON means defaults are used while every other file survives,
+    // which looks exactly like "one field reverted". Name the error so the
+    // serial log points at the real cause instead.
+    Serial.printf("!! " CFG_PATH " corrupt: %s\n", err.c_str());
+    return false;
+  }
 
   cfgSetStr(cfg.ssid, sizeof(cfg.ssid), doc["ssid"] | "");
   cfgSetStr(cfg.pass, sizeof(cfg.pass), doc["pass"] | "");

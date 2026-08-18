@@ -15,6 +15,8 @@ library only, so it runs anywhere Python 3.9+ does with nothing to install.
     drfx tz list                      the zones the device understands
     drfx tz set Europe/London         change the clock, no reboot
     drfx history                      recent signals held by the bridge
+    drfx backup                       save every setting to a JSON file
+    drfx restore backup.json          write a backup back to the device
     drfx doctor                       check the whole chain end to end
 
 Connection details come from flags or the environment, flags winning:
@@ -408,6 +410,50 @@ def cmd_tz(a, st) -> int:
     return 0
 
 
+def cmd_backup(a, st) -> int:
+    """Snapshot every setting the device will return, to a local JSON file.
+
+    Secrets (WiFi passwords, device key, admin password) are never sent back
+    by the firmware, so the backup records only WHETHER they exist - restoring
+    leaves those fields untouched on the device thanks to blank-means-keep.
+    """
+    cfg = request(f"{a.device}/api/config", user=a.user, password=a.password)
+    out = Path(a.file)
+    out.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    bridge = cfg.get("bridge") or "(none)"
+    print(f"{st.ACC}backed up {len(cfg)} fields to {out}{st.RESET}")
+    print(st.kv("bridge url", bridge))
+    print(st.kv("secrets", "recorded as present/absent only - restore will keep "
+                          "whatever is already on the device"))
+    return 0
+
+
+def cmd_restore(a, st) -> int:
+    """Push a backup file back to the device. Blank secret fields are dropped
+    before posting so the device's blank-means-keep rule leaves stored
+    passwords and keys alone."""
+    cfg = json.loads(Path(a.file).read_text(encoding="utf-8"))
+    # hasX flags are read-only status, not settable fields
+    for k in ("hasPass", "hasPass2", "hasDevKey"):
+        cfg.pop(k, None)
+    r = request(f"{a.device}/api/config", method="POST", body=cfg,
+                user=a.user, password=a.password) or {}
+    if not r.get("ok"):
+        raise ApiError("the device refused to write to flash - try again")
+    print(f"{st.ACC}restored {len(cfg)} fields from {a.file}{st.RESET}")
+    if r.get("reboot"):
+        print(f"{st.AMB}device is rebooting (network change) - "
+              f"give it ~20 seconds{st.RESET}")
+    else:
+        back = request(f"{a.device}/api/config", user=a.user, password=a.password)
+        print(st.kv("bridge url", back.get("bridge") or "(none)"))
+        print(st.kv("verify", "restored values match the backup"
+                    if all(back.get(k) == v for k, v in cfg.items()
+                           if not isinstance(v, bool) or k in back)
+                    else "re-check: some values differ"))
+    return 0
+
+
 def cmd_doctor(a, st) -> int:
     """Walk the whole chain and say which link is broken, not just that it is."""
     failures = 0
@@ -565,6 +611,12 @@ def build_parser() -> argparse.ArgumentParser:
     tzset.add_argument("zone", help="IANA name or city, e.g. Europe/London")
 
     sub.add_parser("doctor", help="check the whole chain")
+
+    b = sub.add_parser("backup", help="save every setting to a JSON file")
+    b.add_argument("file", nargs="?", default="drfx-backup.json",
+                   help="where to write it (default drfx-backup.json)")
+    r = sub.add_parser("restore", help="write a backup back to the device")
+    r.add_argument("file", help="the backup JSON to restore")
     return p
 
 
@@ -573,6 +625,7 @@ COMMANDS = {
     "next": cmd_next, "crypto": cmd_crypto,
     "push": cmd_push, "send": cmd_send, "history": cmd_history,
     "tz": cmd_tz, "doctor": cmd_doctor,
+    "backup": cmd_backup, "restore": cmd_restore,
 }
 
 

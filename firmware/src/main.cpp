@@ -989,10 +989,19 @@ void setup() {
   Serial.println(F("\nDrFX GodMode " FW_VERSION));
 
   if (!LittleFS.begin()) {
+    // A mount failure here is the single most common reason settings appear to
+    // "revert after reboot" - the format below silently wipes /config.json, and
+    // the device comes up with defaults while the user swears they saved. Say
+    // it out loud on the serial log so it is never a mystery again.
+    Serial.println(F("!! LittleFS mount failed - FORMATTING, all settings lost"));
     LittleFS.format();
     LittleFS.begin();
   }
-  cfgLoad();
+  if (cfgLoad()) {
+    Serial.printf("config loaded: bridge=%s tz=%s\n", cfg.bridge, cfg.tzName);
+  } else {
+    Serial.println(F("!! config load failed - using defaults"));
+  }
   applyTimezone();   // before any localtime_r call, including in AP mode
 
   displayBegin();
