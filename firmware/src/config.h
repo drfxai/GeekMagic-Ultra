@@ -26,8 +26,8 @@ struct Config {
   // Base URL of the Cloudflare Worker, no trailing slash.
   // https:// is the norm. http:// is allowed if you put the Worker on your own
   // domain with "Always Use HTTPS" turned off - that saves ~16 kB of RAM.
-  char bridge[96] = "";
-  char devKey[49] = "";
+  char bridge[96] = "https://fx-godmode-bridge.drfxai.workers.dev";
+  char devKey[49] = "Nrl21jg1d08HrsDh7ATSVbuvV7QD2tsakFzNXojd";
   char devId[25] = "main";
   uint16_t pollSec = 5;
   uint16_t staleMin = 240;   // after this long with no new signal, show IDLE
